@@ -1,0 +1,4 @@
+name: zdkm-usb
+append:
+  EXTRA_DTC_OVERLAY_FILE: zdkm-usb.overlay
+  EXTRA_CONF_FILE: zdkm-usb.conf

@@ -1,0 +1,13 @@
+#ifndef ZDKM_BEHAVIORS_DTSI
+#define ZDKM_BEHAVIORS_DTSI
+
+/ {
+    behaviors {
+        zdkm_unlock: zdkm_unlock {
+            compatible = "zdkm,behavior-unlock";
+            #binding-cells = <0>;
+        };
+    };
+};
+
+#endif

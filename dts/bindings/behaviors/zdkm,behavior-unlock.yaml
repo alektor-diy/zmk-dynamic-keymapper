@@ -1,0 +1,3 @@
+description: Authorize one dynamic keymapper update
+compatible: "zdkm,behavior-unlock"
+include: zero_param.yaml

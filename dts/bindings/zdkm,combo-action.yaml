@@ -1,0 +1,13 @@
+description: ZMK behavior binding selectable as a dynamic combo action
+compatible: "zdkm,combo-action"
+properties:
+  action-id:
+    type: int
+    required: true
+    description: Unique stable ID between 1 and 255
+  display-name:
+    type: string
+    required: true
+  bindings:
+    type: phandle-array
+    required: true

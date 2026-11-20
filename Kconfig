@@ -1,0 +1,29 @@
+DT_CHOSEN_ZDKM_UART := zdkm,uart
+
+config ZDKM
+	bool "Dynamic keymapper"
+	default y if $(dt_chosen_enabled,$(DT_CHOSEN_ZDKM_UART))
+	depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+	depends on $(dt_chosen_enabled,$(DT_CHOSEN_ZDKM_UART))
+	select ZMK_USB
+	select SETTINGS
+	select SERIAL
+	select UART_LINE_CTRL
+	select CRC
+	help
+	  Configure combos at runtime over the dedicated USB serial port.
+	  Include <zdkm.dtsi> in the keymap to enable this module.
+
+if ZDKM
+
+config ZDKM_COMBO_SLOTS
+	int "Number of free combo slots in addition to imported definitions"
+	range 1 64
+	default 8
+
+config ZDKM_COMBO_TIMEOUT_MS
+	int "Default combo timeout in milliseconds"
+	range 10 200
+	default 50
+
+endif

@@ -1,0 +1,18 @@
+#ifndef ZDKM_DTSI
+#define ZDKM_DTSI
+
+#include <behaviors/zdkm.dtsi>
+
+/ {
+    chosen {
+        zdkm,uart = &zdkm_cdc;
+    };
+};
+
+&zephyr_udc0 {
+    zdkm_cdc: zdkm_cdc {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};
+
+#endif

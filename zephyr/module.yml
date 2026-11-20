@@ -1,0 +1,7 @@
+name: zmk-dynamic-keymapper
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    dts_root: .
+    snippet_root: .
