@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light">
   <meta name="description" content="ZMK のキーマップ、コンボ、マクロを USB 接続で編集します。">
   <title>ZMK Dynamic Keymapper</title>
-  <link rel="stylesheet" href="./styles.css?v=editor-options">
+  <link rel="stylesheet" href="./styles.css?v=key-choices">
   <script type="module">
-    import("./app.js?v=unlock-wait").catch(error => {
+    import("./app.js?v=key-choices").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -26,51 +26,72 @@
         <div><strong>ZMK Dynamic Keymapper</strong></div>
       </div>
       <div class="connection">
-        <span id="connection-state" class="connection-state" data-state="offline" aria-live="polite">GUI 起動待ち</span>
+        <div class="connection-info" role="status">
+          <span id="connection-state" class="connection-state" data-state="offline">GUI 起動待ち</span>
+          <span id="connection-target" hidden></span>
+        </div>
         <button id="connect" class="primary" type="button" disabled>USB で接続</button>
         <button id="demo" class="secondary" type="button" disabled>デモを試す</button>
       </div>
     </div>
+    <nav class="editor-nav" aria-label="設定画面">
+      <button id="show-keymap" type="button" aria-pressed="false" aria-controls="keymap-panel">キーマップ<span id="map-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+      <button id="show-combos" type="button" aria-pressed="true" aria-controls="combos-panel">コンボ<span id="combo-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+      <button id="show-macros" type="button" aria-pressed="false" aria-controls="macros-panel">マクロ<span id="macro-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+    </nav>
   </header>
 
   <main>
     <p id="notice" class="notice" aria-live="polite" hidden></p>
-    <p id="demo-notice" class="notice" role="status" hidden>デモモードでサンプルのキーボードを編集中です。実機接続や解除キーは不要です。変更はデモ終了時にリセットされます。</p>
+    <p id="demo-notice" class="notice" hidden>デモでの変更は、デモを終了するとリセットされます。</p>
     <p id="legacy-unlock-notice" class="notice" role="status" hidden>このファームウェアでは保存ごとに解除キーを押します。接続時に一度だけ解除するには、ZDKM を含むファームウェアを更新してください。</p>
     <noscript><p class="notice" data-kind="error">USB 接続を使うには、このページで JavaScript を許可してください。</p></noscript>
 
-    <nav class="editor-nav" aria-label="設定画面">
-      <button id="show-keymap" class="secondary" type="button" aria-pressed="true">キーマップ</button>
-      <button id="show-combos" class="secondary" type="button" aria-pressed="false">コンボ</button>
-      <button id="show-macros" class="secondary" type="button" aria-pressed="false">マクロ</button>
-    </nav>
     <p id="editor-availability" class="notice" hidden></p>
 
-    <div id="combos-panel" class="workspace" hidden>
-      <div class="editor">
-        <section class="panel" aria-labelledby="keyboard-heading">
+    <section id="combos-panel" aria-labelledby="combos-heading" hidden>
+      <div class="page-heading">
+        <h1 id="combos-heading">コンボ</h1>
+        <p>複数のキーを同時に押したときの動作を設定します。</p>
+      </div>
+      <div class="workspace">
+        <section class="panel saved-panel" aria-labelledby="saved-heading">
           <div class="panel-header">
             <div>
-              <h2 id="keyboard-heading">キーボード</h2>
-              <p>キー上の数字は物理位置 ID です。</p>
+              <h2 id="saved-heading">保存済みコンボ</h2>
+              <p id="slot-count"></p>
             </div>
-            <span id="selection-count" class="selection-count">0 / 2 選択</span>
+            <button id="combo-new" class="secondary compact" type="button" disabled>＋ 追加</button>
           </div>
-          <div class="keyboard-surface" id="keyboard-surface">
-            <div id="keyboard" class="keyboard" role="group" aria-label="物理キーの配置"></div>
-            <div id="keyboard-placeholder" class="keyboard-placeholder">
-              <strong>キーボードを接続してください</strong>
-              <span>端末から物理キーの配置を読み込みます。</span>
-            </div>
+          <p id="list-empty" class="list-empty"></p>
+          <ul id="combo-list" class="saved-list" aria-label="保存済みコンボ"></ul>
+          <div id="recovery" class="recovery" hidden>
+            <p>保存済みの設定を読み込めません。設定を初期化すると編集できるようになります。</p>
+            <button id="reset" class="danger" type="button">コンボ設定を初期化</button>
+          </div>
+          <div class="list-footer">
+            <button id="refresh" class="secondary compact" type="button" disabled>再読み込み</button>
           </div>
         </section>
 
-        <section class="panel" aria-labelledby="editor-heading">
+        <section class="panel detail-panel" aria-labelledby="editor-heading">
           <div class="panel-header">
-            <h2 id="editor-heading">コンボを作成</h2>
+            <h2 id="editor-heading" tabindex="-1">コンボの詳細</h2>
+            <span id="combo-draft-state" class="draft-state" role="status" hidden></span>
           </div>
-          <form id="editor-form" class="editor-form">
-            <div class="input-grid">
+          <p id="combo-empty-detail" class="list-empty"></p>
+          <form id="editor-form" class="editor-form" hidden>
+            <div class="combo-keys">
+              <div class="combo-section-heading">
+                <h3 id="keyboard-heading">押すキー</h3>
+                <span id="selection-count" class="selection-count"></span>
+              </div>
+              <p id="combo-key-hint" class="field-hint">物理配列から、同時に押す位置を 2 つ以上選びます。</p>
+              <div class="keyboard-surface">
+                <div id="keyboard" class="keyboard" role="group" aria-labelledby="keyboard-heading" aria-describedby="combo-key-hint"></div>
+              </div>
+            </div>
+            <div class="input-grid combo-fields">
               <div>
                 <label for="positions">物理位置 ID</label>
                 <input id="positions" type="text" placeholder="例 1, 4, 7" disabled>
@@ -79,50 +100,40 @@
                 <label for="usage">出力する動作</label>
                 <select id="usage" disabled required></select>
               </div>
+              <div id="combo-scope" hidden>
+                <label for="layers">対象レイヤー</label>
+                <input id="layers" type="text" placeholder="例 0, 2" aria-describedby="combo-layer-hint">
+                <p id="combo-layer-hint" class="field-hint"></p>
+              </div>
             </div>
             <details id="options" class="options" hidden>
               <summary>判定オプション</summary>
               <div class="input-grid">
                 <div><label for="combo-timeout">判定時間 (ms)</label><input id="combo-timeout" type="number" min="1" max="65535" step="1" required></div>
                 <div><label for="combo-idle">先行アイドル (ms)</label><input id="combo-idle" type="number" min="0" max="65535" step="1" required></div>
-                <div><label for="layers">対象レイヤー</label><input id="layers" type="text" placeholder="空欄で全レイヤー"></div>
               </div>
               <label class="check-option"><input id="slow-release" type="checkbox"> 構成キーをすべて離してから出力を解放</label>
             </details>
-            <div class="form-actions">
+            <div class="form-actions detail-actions">
               <button id="save" class="primary" type="submit" disabled>キーボードに保存</button>
-              <button id="clear" class="secondary" type="button" disabled>選択をクリア</button>
+              <button id="clear" class="secondary" type="button" disabled>変更を取り消す</button>
+              <button id="combo-delete" class="danger" type="button" disabled>削除</button>
             </div>
           </form>
+          <p id="combo-result" class="notice detail-result" role="status" hidden></p>
         </section>
       </div>
+    </section>
 
-      <aside class="panel saved-panel" aria-labelledby="saved-heading">
-        <div class="panel-header">
-          <div>
-            <h2 id="saved-heading">保存済みコンボ</h2>
-            <p id="slot-count">接続すると一覧を表示します。</p>
-          </div>
-          <button id="refresh" class="secondary compact" type="button" disabled>再読み込み</button>
+    <section id="keymap-panel" class="editor" aria-labelledby="keymap-heading" hidden>
+      <div class="page-heading map-page-heading">
+        <div><h1 id="keymap-heading">キーマップ</h1><p>物理配列で対象キーを選んで割り当てます。</p></div>
+        <div class="row-actions">
+          <button id="rename-layer" class="secondary compact" type="button" aria-expanded="false" aria-controls="rename-layer-form" hidden>レイヤー名を変更</button>
+          <button id="map-refresh" class="secondary compact" type="button">再読み込み</button>
         </div>
-        <p id="list-empty" class="list-empty">キーボードは未接続です。</p>
-        <ul id="combo-list" class="combo-list" aria-label="保存済みコンボ"></ul>
-        <div id="recovery" class="recovery" hidden>
-          <p>保存済みの設定を読み込めません。設定を初期化すると編集できるようになります。</p>
-          <button id="reset" class="danger" type="button">コンボ設定を初期化</button>
-        </div>
-      </aside>
-    </div>
-
-    <section id="keymap-panel" class="editor" aria-label="キーマップ" hidden>
-      <div class="panel">
-        <div class="panel-header">
-          <h2>キーマップ</h2>
-          <div class="row-actions">
-            <button id="rename-layer" class="secondary compact" type="button" aria-expanded="false" aria-controls="rename-layer-form" hidden>レイヤー名を変更</button>
-            <button id="map-refresh" class="secondary compact" type="button">再読み込み</button>
-          </div>
-        </div>
+      </div>
+      <div class="panel map-layout-panel">
         <div id="map-layers" class="layer-picker" role="group" aria-label="レイヤー"></div>
         <form id="rename-layer-form" class="rename-layer-form" hidden>
           <div>
@@ -133,25 +144,28 @@
           <button id="save-layer-name" class="primary compact" type="submit">名前を保存</button>
           <button id="cancel-layer-name" class="secondary compact" type="button">キャンセル</button>
         </form>
-        <div class="keyboard-surface">
+        <div class="keyboard-surface map-keyboard-surface">
           <div id="map-keyboard" class="keyboard" role="group" aria-label="キーマップの物理キー"></div>
         </div>
       </div>
       <form id="map-form" class="panel">
-        <div class="panel-header">
-          <div><h2 id="map-selection"></h2><p id="map-current"></p></div>
-          <div class="layout-picker" role="group" aria-label="キー配列">
-            <button id="map-us" class="secondary compact" type="button" aria-pressed="true">US</button>
-            <button id="map-jis" class="secondary compact" type="button" aria-pressed="false">JIS</button>
+        <div class="map-toolbar">
+          <div class="panel-header">
+            <div><h2>割り当てるキー</h2><p id="map-current"></p></div>
+            <div class="layout-picker" role="group" aria-label="キー配列">
+              <button id="map-us" class="secondary compact" type="button" aria-pressed="true">US</button>
+              <button id="map-jis" class="secondary compact" type="button" aria-pressed="false">JIS</button>
+            </div>
+          </div>
+          <div class="map-mode">
+            <label class="check-option"><input id="map-auto" type="checkbox" checked> 候補を選ぶと保存して次のキーへ</label>
+            <p id="map-result" class="field-hint" role="status" hidden></p>
           </div>
         </div>
         <div class="editor-form">
-          <div id="map-palette-targets" class="palette-targets" role="group" aria-label="パレットの入力先" hidden></div>
-          <div class="palette-surface">
-            <div id="map-palette" class="full-size-palette" role="group" aria-label="フルサイズのキー候補"></div>
-          </div>
-          <div id="map-extra-keys" class="extra-key-palette" role="group" aria-label="その他のキー候補"></div>
-          <div id="map-assignment" hidden>
+          <details id="map-assignment" class="map-assignment" hidden>
+            <summary>動作の詳細設定</summary>
+            <p class="field-hint">詳細設定を開いている間は、候補から選んだキーも保存ボタンで確定します。</p>
             <div class="map-fields">
               <div>
                 <label for="map-behavior">割り当てる動作</label>
@@ -162,34 +176,55 @@
             </div>
             <div class="form-actions">
               <button id="map-save" class="primary" type="submit">キーボードに保存</button>
-              <button id="map-cancel" class="secondary" type="button">選択をクリア</button>
+              <button id="map-cancel" class="secondary" type="button">変更を取り消す</button>
             </div>
+          </details>
+          <div id="map-palette-targets" class="palette-targets" role="group" aria-label="パレットの入力先" hidden></div>
+          <div id="map-special-keys" class="special-key-palette" role="group" aria-label="キーの割り当てを透過・無効にする"></div>
+          <div class="palette-surface">
+            <div id="map-palette" class="full-size-palette" role="group" aria-label="フルサイズのキー候補"></div>
           </div>
+          <div id="map-extra-keys" class="extra-key-palette" role="group" aria-label="その他のキー候補"></div>
         </div>
       </form>
     </section>
 
-    <section id="macros-panel" class="panel" aria-labelledby="macro-heading" hidden>
-      <div class="panel-header">
-        <div><h2 id="macro-heading">マクロ</h2><p>保存したマクロはキーマップやコンボの出力に割り当てられます。</p></div>
+    <section id="macros-panel" aria-labelledby="macro-heading" hidden>
+      <div class="page-heading">
+        <h1 id="macro-heading">マクロ</h1>
+        <p>キー操作と待機を組み合わせます。保存したマクロはキーマップやコンボに割り当てられます。</p>
       </div>
-      <form id="macro-form" class="editor-form">
-        <div class="macro-toolbar">
-          <div><label for="macro-slot">保存済みマクロ</label><select id="macro-slot"></select></div>
-          <button id="macro-new" class="secondary compact" type="button">マクロを追加</button>
-          <button id="macro-delete" class="danger compact" type="button">マクロを削除</button>
-          <button id="macro-refresh" class="secondary compact" type="button">再読み込み</button>
-        </div>
-        <p id="macro-capacity" class="field-hint"></p>
-        <p id="macro-status" class="list-empty"></p>
-        <ol id="macro-steps" class="macro-steps" aria-label="実行する手順"></ol>
-        <div class="form-actions">
-          <button id="macro-add" class="secondary" type="button">手順を追加</button>
-          <button id="macro-save" class="primary" type="submit">キーボードに保存</button>
-        </div>
-      </form>
+      <div class="workspace">
+        <section class="panel saved-panel" aria-labelledby="macro-saved-heading">
+          <div class="panel-header">
+            <div><h2 id="macro-saved-heading">保存済みマクロ</h2><p id="macro-capacity"></p></div>
+            <button id="macro-new" class="secondary compact" type="button">＋ 追加</button>
+          </div>
+          <p id="macro-list-empty" class="list-empty"></p>
+          <ul id="macro-list" class="saved-list" aria-labelledby="macro-saved-heading"></ul>
+          <div class="list-footer">
+            <button id="macro-refresh" class="secondary compact" type="button">再読み込み</button>
+          </div>
+        </section>
+        <section class="panel detail-panel" aria-labelledby="macro-detail-heading">
+          <div class="panel-header">
+            <h2 id="macro-detail-heading" tabindex="-1">マクロの詳細</h2>
+            <span id="macro-draft-state" class="draft-state" role="status" hidden></span>
+          </div>
+          <p id="macro-status" class="list-empty" hidden></p>
+          <form id="macro-form" class="editor-form" hidden>
+            <ol id="macro-steps" class="macro-steps" aria-label="実行する手順"></ol>
+            <button id="macro-add" class="secondary" type="button">＋ 手順を追加</button>
+            <div class="form-actions detail-actions">
+              <button id="macro-save" class="primary" type="submit">キーボードに保存</button>
+              <button id="macro-cancel" class="secondary" type="button">変更を取り消す</button>
+              <button id="macro-delete" class="danger" type="button">削除</button>
+            </div>
+          </form>
+          <p id="macro-result" class="notice detail-result" role="status" hidden></p>
+        </section>
+      </div>
     </section>
-    <footer>実機との接続には、デスクトップ版 Chrome または Edge の Web Serial を使います。</footer>
   </main>
 
   <dialog id="unlock-dialog" aria-labelledby="unlock-heading">
@@ -213,10 +248,21 @@
       </div>
     </form>
   </dialog>
+  <dialog id="discard-dialog" aria-labelledby="discard-heading">
+    <form method="dialog">
+      <h2 id="discard-heading">未保存の変更を破棄しますか？</h2>
+      <p id="discard-description"></p>
+      <div class="form-actions">
+        <button class="secondary" value="cancel" autofocus>編集を続ける</button>
+        <button class="danger" value="confirm">変更を破棄</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="macro-delete-dialog" aria-labelledby="macro-delete-heading">
     <form method="dialog">
       <h2 id="macro-delete-heading">マクロを削除</h2>
       <p>マクロの手順を削除します。キーやコンボの割り当ては残り、同じ枠に新しいマクロを保存すると、その割り当てから実行されます。</p>
+      <p id="macro-delete-draft" hidden>編集中の手順も破棄されます。</p>
       <div class="form-actions">
         <button class="secondary" value="cancel" autofocus>キャンセル</button>
         <button class="danger" value="confirm">削除する</button>
