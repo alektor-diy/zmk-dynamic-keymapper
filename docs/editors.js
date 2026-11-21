@@ -1,9 +1,17 @@
-const KEYBOARD_PAGE = 0x07 * 65536;
-const CONSUMER_PAGE = 0x0c * 65536;
+import { fillKeycap, fullSizeKeys, keycodes, keycodeText } from "./keycodes.js?v=keyboard-palette";
+
 const MACRO_OPERATIONS = ["タップ", "押す", "離す", "待つ"];
+const PAGES = ["keymap", "combos", "macros"];
+const LAYOUT_SETTING = "zdkm-keyboard-layout";
 
 export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice, state }) {
-  let page = "combos";
+  let page = "keymap";
+  let keyboardLayout = "us";
+  try {
+    if (localStorage.getItem(LAYOUT_SETTING) === "jis") keyboardLayout = "jis";
+  } catch {
+    // Layout switching also works when browser storage is unavailable.
+  }
   let features = null;
   let keys = [];
   let layerCount = 0;
@@ -15,15 +23,6 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   let slot = 0;
   let steps = null;
   let macroDirty = false;
-
-  const keyCodes = new Map([...usageLabels].map(([usage, label]) => [KEYBOARD_PAGE + usage, label]));
-  for (const [usage, label] of [
-    [0x87, "ろ"], [0x88, "かな"], [0x89, "¥"], [0x8a, "変換"], [0x8b, "無変換"],
-  ]) keyCodes.set(KEYBOARD_PAGE + usage, label);
-  for (const [usage, label] of [
-    [0xb5, "次の曲"], [0xb6, "前の曲"], [0xcd, "再生 / 停止"], [0xe2, "消音"],
-    [0xe9, "音量 +"], [0xea, "音量 −"],
-  ]) keyCodes.set(CONSUMER_PAGE + usage, label);
 
   function button(label, handler, style = "secondary") {
     const item = document.createElement("button");
@@ -39,24 +38,39 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     return !!(features && device && !busy && info?.status !== "loading");
   }
 
-  function bindLabel(binding) {
-    if (!binding || binding.id === 65535) return "—";
+  function keyText(value) {
+    return keycodeText(value, keyboardLayout);
+  }
+
+  function keyOption(value) {
+    const { legend, code } = keyText(value);
+    return legend === code ? legend : `${legend} · ${code}`;
+  }
+
+  function bindingText(binding) {
+    if (!binding || binding.id === 65535) return { legend: "—" };
     const { id, parameters } = binding;
-    if (id === features.keyPress && keyCodes.has(parameters[0])) return keyCodes.get(parameters[0]);
-    if (id === features.macro) return `マクロ ${parameters[0]}`;
+    if (id === features.keyPress) return keyText(parameters[0]);
+    if (id === features.macro) return { legend: `マクロ ${parameters[0]}` };
     const behavior = behaviors.get(id);
-    if (!behavior) return `Behavior ${id}`;
-    return [behavior.name, ...parameters.flatMap((value, i) => {
+    if (!behavior) return { legend: `Behavior ${id}` };
+    const codes = [];
+    const args = parameters.flatMap((value, i) => {
       const kind = behavior.parameters[i];
       if (!kind && !value) return [];
-      if (kind === 2) return [keyCodes.get(value) ?? `0x${value.toString(16)}`];
+      if (kind === 2) {
+        const { legend, code } = keyText(value);
+        codes.push(code);
+        return [legend];
+      }
       return [value];
-    })].join(" ");
+    });
+    return { legend: [behavior.name, ...args].join(" "), code: codes.join(" ") };
   }
 
   function refresh() {
     const { device, busy, info } = state();
-    for (const name of ["combos", "keymap", "macros"]) {
+    for (const name of PAGES) {
       const control = elements[`show-${name}`];
       control.setAttribute("aria-pressed", String(name === page));
       control.disabled = busy;
@@ -75,6 +89,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       for (const control of elements[group].querySelectorAll("button, select, input")) {
         control.disabled = !enabled || control.hasAttribute("data-unavailable");
       }
+    }
+    const canPick = position !== null && behaviors.get(features?.keyPress)?.editable;
+    for (const key of elements["map-form"].querySelectorAll(".palette-key")) {
+      key.disabled = !enabled || !canPick;
     }
     elements["macro-slot"].disabled = !enabled;
     elements["macro-refresh"].disabled = !enabled;
@@ -98,11 +116,16 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     steps = null;
     macroDirty = false;
     macroStatus("");
-    elements["map-form"].hidden = true;
+    updateMapSelection();
     for (const id of ["map-layers", "map-keyboard", "macro-steps"]) elements[id].replaceChildren();
     elements["macro-slot"].replaceChildren(...Array.from({ length: features?.macroSlots ?? 0 },
       (_, index) => new Option(`マクロ ${index}`, index)));
-    if (features) show("combos", false);
+    if (!features && layout.length) page = "combos";
+  }
+
+  function drawPhysicalKeys() {
+    drawKeyboard(elements["map-keyboard"], keys, false, selectKey, key => bindingText(bindings[key]));
+    markKey();
   }
 
   function drawKeymap() {
@@ -111,8 +134,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       item.setAttribute("aria-pressed", String(layer === entry.id));
       return item;
     }));
-    drawKeyboard(elements["map-keyboard"], keys, false, selectKey, key => bindLabel(bindings[key]));
-    markKey();
+    drawPhysicalKeys();
   }
 
   async function loadKeymap(attached, requested, updateCatalog) {
@@ -137,7 +159,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     bindings = current;
     drawKeymap();
     if (position !== null) selectKey(position);
-    else elements["map-form"].hidden = true;
+    else updateMapSelection();
   }
 
   function openKeymap(requested = layer, updateCatalog = false) {
@@ -166,9 +188,11 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     if (picker) {
       const options = id === features.macro ?
         Array.from({ length: features.macroSlots }, (_, i) => [i, `マクロ ${i}`]) :
-        kind === 2 ? [...keyCodes] : layers.map(entry => [entry.id, entry.name]);
+        kind === 2 ? keycodes.map(code => [code, keyOption(code)]) : layers.map(entry => [entry.id, entry.name]);
       if (value === undefined) field.add(new Option("選択してください", ""));
-      else if (!options.some(([code]) => code === value)) field.add(new Option(`0x${value.toString(16)}`, value));
+      else if (!options.some(([code]) => code === value)) {
+        field.add(new Option(kind === 2 ? keyOption(value) : `0x${value.toString(16)}`, value));
+      }
       for (const [code, text] of options) field.add(new Option(text, code));
       field.value = value ?? "";
     } else {
@@ -192,20 +216,28 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function markPalette() {
-    const isKey = Number(elements["map-behavior"].value) === features.keyPress;
+    const isKey = position !== null && Number(elements["map-behavior"].value) === features?.keyPress;
     const code = elements["map-parameters"].querySelector("[data-parameter='0']")?.value;
-    for (const entry of elements["map-palette"].children) {
+    for (const entry of elements["map-form"].querySelectorAll(".palette-key")) {
       entry.setAttribute("aria-pressed", String(isKey && entry.dataset.code === code));
     }
+  }
+
+  function updateMapSelection() {
+    const selected = position !== null;
+    elements["map-assignment"].hidden = !selected;
+    elements["map-selection"].textContent = selected ? `位置 ${position} の割り当て` : "割り当て候補";
+    const current = bindingText(bindings[position]);
+    elements["map-current"].textContent = selected ?
+      `現在 ${[current.legend, current.code].filter(Boolean).join(" · ")}` :
+      "上のキーボードから変更するキーを選んでください。";
   }
 
   function selectKey(key) {
     position = key;
     markKey();
     const current = bindings[key];
-    elements["map-form"].hidden = false;
-    elements["map-selection"].textContent = `位置 ${key}`;
-    elements["map-current"].textContent = `現在の割り当て ${bindLabel(current)}`;
+    updateMapSelection();
     const select = elements["map-behavior"];
     select.replaceChildren(new Option("選択してください", ""));
     const catalog = [...behaviors].filter(([, behavior]) => behavior.editable)
@@ -213,6 +245,62 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     for (const [id, behavior] of catalog) select.add(new Option(behavior.name, id));
     const canReplace = behaviors.get(current.id)?.editable;
     setBindingDraft(canReplace ? current.id : undefined, current.parameters);
+    refresh();
+  }
+
+  function renderPalette() {
+    const groups = fullSizeKeys(keyboardLayout);
+    const shown = new Set();
+    const caps = groups.map((group, index) => {
+      const block = document.createElement("div");
+      block.className = "palette-block";
+      block.style.setProperty("--columns", [60, 12, 16][index]);
+      for (const { code, column, row, width, height } of group) {
+        shown.add(code);
+        const entry = paletteKey(code);
+        entry.dataset.row = row;
+        entry.style.gridArea = `${row} / ${column} / span ${height} / span ${width}`;
+        entry.toggleAttribute("data-jis-enter", keyboardLayout === "jis" && index === 0 && height === 2);
+        block.append(entry);
+      }
+      return block;
+    });
+    elements["map-palette"].replaceChildren(...caps);
+    elements["map-extra-keys"].replaceChildren(...keycodes.filter(code => !shown.has(code)).map(paletteKey));
+    elements["map-us"].setAttribute("aria-pressed", String(keyboardLayout === "us"));
+    elements["map-jis"].setAttribute("aria-pressed", String(keyboardLayout === "jis"));
+    markPalette();
+  }
+
+  function paletteKey(code) {
+    const entry = button("", () => setBindingDraft(features.keyPress, [code]));
+    entry.classList.add("palette-key");
+    entry.dataset.code = code;
+    entry.title = keyOption(code);
+    fillKeycap(entry, keyText(code));
+    return entry;
+  }
+
+  function changeLayout(layout) {
+    if (keyboardLayout === layout) return;
+    keyboardLayout = layout;
+    try {
+      localStorage.setItem(LAYOUT_SETTING, layout);
+    } catch {
+      // A browser session can still use the selected layout.
+    }
+    renderPalette();
+    if (layers) drawPhysicalKeys();
+    if (position !== null) {
+      const selected = elements["map-behavior"].value;
+      const values = [];
+      for (const field of elements["map-parameters"].querySelectorAll("[data-parameter]")) {
+        if (field.value !== "") values[Number(field.dataset.parameter)] = Number(field.value);
+      }
+      setBindingDraft(selected === "" ? undefined : Number(selected), values);
+      updateMapSelection();
+    }
+    refresh();
   }
 
   function macroStatus(text) {
@@ -320,16 +408,17 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     });
   }
 
-  function show(name, load = true) {
-    page = name;
-    refresh();
-    if (!load) return;
-    if (name === "keymap" && !layers) openKeymap();
-    if (name === "macros" && steps === null) openMacro();
+  function loadPage() {
+    if (page === "keymap" && !layers) openKeymap();
+    if (page === "macros" && steps === null) openMacro();
   }
 
-  for (const name of ["combos", "keymap", "macros"]) {
-    elements[`show-${name}`].addEventListener("click", () => show(name));
+  for (const name of PAGES) {
+    elements[`show-${name}`].addEventListener("click", () => {
+      page = name;
+      refresh();
+      loadPage();
+    });
   }
   elements["map-refresh"].addEventListener("click", () => openKeymap(layer, true));
   elements["map-behavior"].addEventListener("change", event => setBindingDraft(
@@ -337,13 +426,12 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   elements["map-cancel"].addEventListener("click", () => {
     position = null;
     markKey();
-    elements["map-form"].hidden = true;
+    updateMapSelection();
+    markPalette();
+    refresh();
   });
-  elements["map-palette"].replaceChildren(...[...keyCodes].map(([code, label]) => {
-    const entry = button(label, () => setBindingDraft(features.keyPress, [code]));
-    entry.dataset.code = code;
-    return entry;
-  }));
+  elements["map-us"].addEventListener("click", () => changeLayout("us"));
+  elements["map-jis"].addEventListener("click", () => changeLayout("jis"));
   elements["map-parameters"].addEventListener("input", markPalette);
   elements["map-form"].addEventListener("submit", event => {
     event.preventDefault();
@@ -393,5 +481,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     });
   });
 
-  return { setConnection, refresh };
+  renderPalette();
+  updateMapSelection();
+  return { setConnection, refresh, loadPage };
 }

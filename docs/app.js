@@ -1,5 +1,6 @@
 import { ConnectionError, SerialDevice, delay } from "./serial.js?v=keymap-macros";
-import { setupEditors } from "./editors.js?v=keymap-macros";
+import { setupEditors } from "./editors.js?v=keyboard-palette";
+import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
@@ -188,8 +189,13 @@ function drawKeyboard(keyboard, keys, preview, select, label) {
     if (!preview) {
       element.type = "button";
       element.dataset.position = key.position;
-      element.textContent = label(key.position);
-      if (element.textContent !== String(key.position)) element.title = element.textContent;
+      const display = label(key.position);
+      if (typeof display === "object") {
+        fillKeycap(element, display);
+        element.title = [display.legend, display.code].filter(Boolean).join(" · ");
+      } else {
+        element.textContent = display;
+      }
       element.setAttribute("aria-label", `物理位置 ${key.position}${element.title ? " " + element.title : ""}`);
       element.addEventListener("click", () => select(key.position));
     }
@@ -353,6 +359,7 @@ async function connect() {
       choosingPort = false;
       busy = false;
       renderState();
+      editors.loadPage();
     }
   }
 }

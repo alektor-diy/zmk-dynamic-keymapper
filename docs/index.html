@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light">
   <meta name="description" content="ZMK のキーマップ、コンボ、マクロを USB 接続で編集します。">
   <title>ZMK Dynamic Keymapper</title>
-  <link rel="stylesheet" href="./styles.css?v=keymap-macros">
+  <link rel="stylesheet" href="./styles.css?v=keyboard-palette">
   <script type="module">
-    import("./app.js?v=keymap-macros").catch(error => {
+    import("./app.js?v=keyboard-palette").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -47,13 +47,13 @@
     <noscript><p class="notice" data-kind="error">USB 接続を使うには、このページで JavaScript を許可してください。</p></noscript>
 
     <nav class="editor-nav" aria-label="設定画面">
-      <button id="show-combos" class="secondary" type="button" aria-pressed="true">コンボ</button>
-      <button id="show-keymap" class="secondary" type="button" aria-pressed="false">キーマップ</button>
+      <button id="show-keymap" class="secondary" type="button" aria-pressed="true">キーマップ</button>
+      <button id="show-combos" class="secondary" type="button" aria-pressed="false">コンボ</button>
       <button id="show-macros" class="secondary" type="button" aria-pressed="false">マクロ</button>
     </nav>
     <p id="editor-availability" class="notice" hidden></p>
 
-    <div id="combos-panel" class="workspace">
+    <div id="combos-panel" class="workspace" hidden>
       <div class="editor">
         <section class="panel" aria-labelledby="keyboard-heading">
           <div class="panel-header">
@@ -124,7 +124,7 @@
     <section id="keymap-panel" class="editor" aria-label="キーマップ" hidden>
       <div class="panel">
         <div class="panel-header">
-          <div><h2>キーマップ</h2><p>レイヤーと変更するキーを選んでください。</p></div>
+          <h2>キーマップ</h2>
           <button id="map-refresh" class="secondary compact" type="button">再読み込み</button>
         </div>
         <div id="map-layers" class="layer-picker" role="group" aria-label="レイヤー"></div>
@@ -132,19 +132,28 @@
           <div id="map-keyboard" class="keyboard" role="group" aria-label="キーマップの物理キー"></div>
         </div>
       </div>
-      <form id="map-form" class="panel" hidden>
+      <form id="map-form" class="panel">
         <div class="panel-header">
           <div><h2 id="map-selection"></h2><p id="map-current"></p></div>
+          <div class="layout-picker" role="group" aria-label="キー配列">
+            <button id="map-us" class="secondary compact" type="button" aria-pressed="true">US</button>
+            <button id="map-jis" class="secondary compact" type="button" aria-pressed="false">JIS</button>
+          </div>
         </div>
         <div class="editor-form">
-          <div id="map-palette" class="key-palette" role="group" aria-label="よく使うキー"></div>
-          <div class="map-fields">
-            <div><label for="map-behavior">割り当てる動作</label><select id="map-behavior" required></select></div>
-            <div id="map-parameters" class="parameter-fields"></div>
+          <div class="palette-surface">
+            <div id="map-palette" class="full-size-palette" role="group" aria-label="フルサイズのキー候補"></div>
           </div>
-          <div class="form-actions">
-            <button id="map-save" class="primary" type="submit">キーボードに保存</button>
-            <button id="map-cancel" class="secondary" type="button">選択をクリア</button>
+          <div id="map-extra-keys" class="extra-key-palette" role="group" aria-label="その他のキー候補"></div>
+          <div id="map-assignment" hidden>
+            <div class="map-fields">
+              <div><label for="map-behavior">割り当てる動作</label><select id="map-behavior" required></select></div>
+              <div id="map-parameters" class="parameter-fields"></div>
+            </div>
+            <div class="form-actions">
+              <button id="map-save" class="primary" type="submit">キーボードに保存</button>
+              <button id="map-cancel" class="secondary" type="button">選択をクリア</button>
+            </div>
           </div>
         </div>
       </form>
