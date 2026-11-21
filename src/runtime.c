@@ -16,6 +16,7 @@
 #include <zmk/physical_layouts.h>
 
 #include "runtime.h"
+#include "macro.h"
 
 LOG_MODULE_REGISTER(zdkm);
 
@@ -47,6 +48,7 @@ enum {
 #define SETTINGS_KEY "zdkm/combos"
 #define ACTION_BASE 0x100
 #define STOCK_ACTION_BASE 0x200
+#define MACRO_ACTION_BASE (STOCK_ACTION_BASE + ZDKM_MAX_COMBOS)
 #define STOCK_ID_FLAG UINT32_C(0x80000000)
 
 struct combo_action {
@@ -67,6 +69,13 @@ DT_FOREACH_STATUS_OKAY(zdkm_combo_action, CHECK_ACTION)
      ZMK_KEYMAP_EXTRACT_BINDING(0, node)},
 static const struct combo_action actions[] = {
     {0}, DT_FOREACH_STATUS_OKAY(zdkm_combo_action, ACTION)
+};
+
+#define MACRO_ACTION(slot, unused)                                                                \
+    {MACRO_ACTION_BASE + (slot), "ZDKM マクロ " STRINGIFY(slot),                                    \
+     {.behavior_dev = DEVICE_DT_NAME(DT_NODELABEL(zdkm_macro)), .param1 = (slot)}}
+static const struct combo_action macro_actions[] = {
+    LISTIFY(ZDKM_MACRO_SLOTS, MACRO_ACTION, (,))
 };
 
 struct stock_combo {
@@ -124,6 +133,10 @@ BUILD_ASSERT(STOCK_COUNT <= ZDKM_MAX_COMBOS, "zdkm: at most 64 static combos can
 
 /* Duplicate ids would make an existing saved action resolve to a different binding. */
 static const struct combo_action *find_action(uint16_t code) {
+    if (code >= MACRO_ACTION_BASE) {
+        size_t index = code - MACRO_ACTION_BASE;
+        return index < ARRAY_SIZE(macro_actions) ? &macro_actions[index] : NULL;
+    }
     if (code >= STOCK_ACTION_BASE) {
         size_t index = code - STOCK_ACTION_BASE + 1;
         return index < ARRAY_SIZE(stock) ? &stock[index].action : NULL;
@@ -139,7 +152,7 @@ static const struct combo_action *find_action(uint16_t code) {
     return NULL;
 }
 
-size_t zdkm_action_count(void) { return ARRAY_SIZE(actions) - 1 + STOCK_COUNT; }
+size_t zdkm_action_count(void) { return ARRAY_SIZE(actions) - 1 + STOCK_COUNT + ARRAY_SIZE(macro_actions); }
 
 const char *zdkm_action_at(size_t index, uint16_t *code) {
     if (index >= zdkm_action_count()) {
@@ -147,8 +160,10 @@ const char *zdkm_action_at(size_t index, uint16_t *code) {
     }
     if (index < ARRAY_SIZE(actions) - 1) {
         *code = actions[index + 1].code;
-    } else {
+    } else if (index < ARRAY_SIZE(actions) - 1 + STOCK_COUNT) {
         *code = STOCK_ACTION_BASE + index - (ARRAY_SIZE(actions) - 1);
+    } else {
+        *code = MACRO_ACTION_BASE + index - (ARRAY_SIZE(actions) - 1 + STOCK_COUNT);
     }
     return find_action(*code)->label;
 }
@@ -173,6 +188,7 @@ static atomic_t apply_pending;
 /* The ZMK local matrix and split central dispatch positions on the system work queue. */
 static uint8_t held_positions[DIV_ROUND_UP(ZMK_KEYMAP_LEN, 8)];
 static size_t held_count;
+bool zdkm_keys_held(void) { return held_count != 0; }
 static struct zdkm_sequence sequence;
 static struct zmk_position_state_changed_event buffered[ZDKM_MAX_KEYS + 1];
 static int64_t last_keypress = INT32_MIN;
@@ -318,7 +334,8 @@ static void merge_legacy_stock(struct zdkm_combo *table) {
 }
 
 static uint16_t decode_output(uint32_t output) {
-    if (output < STOCK_ACTION_BASE) {
+    if (output < STOCK_ACTION_BASE ||
+        (output >= MACRO_ACTION_BASE && output < MACRO_ACTION_BASE + ZDKM_MACRO_SLOTS)) {
         return output;
     }
     for (size_t i = 1; i < ARRAY_SIZE(stock); ++i) {
@@ -384,8 +401,8 @@ static size_t encode_table(uint8_t *data, const struct zdkm_combo *table) {
         sys_put_le16(combo->timeout_ms, entry + 3);
         sys_put_le16(combo->prior_idle_ms, entry + 5);
         sys_put_le32(combo->layers, entry + 7);
-        uint32_t output = combo->output < STOCK_ACTION_BASE ? combo->output :
-                          stock_ids[combo->output - STOCK_ACTION_BASE + 1];
+        bool is_stock = combo->output >= STOCK_ACTION_BASE && combo->output < MACRO_ACTION_BASE;
+        uint32_t output = is_stock ? stock_ids[combo->output - STOCK_ACTION_BASE + 1] : combo->output;
         sys_put_le32(output, entry + 11);
         for (size_t i = 0; i < combo->count; ++i) {
             sys_put_le16(combo->positions[i], entry + ENTRY_SIZE + 2 * i);

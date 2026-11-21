@@ -1,4 +1,5 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=stock-combos";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=keymap-macros";
+import { setupEditors } from "./editors.js?v=keymap-macros";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
@@ -165,9 +166,8 @@ function bounds(keys) {
   };
 }
 
-function renderKeyboard(keys, preview = false) {
+function drawKeyboard(keyboard, keys, preview, select, label) {
   const area = bounds(keys);
-  const keyboard = elements.keyboard;
   keyboard.toggleAttribute("data-preview", preview);
   keyboard.toggleAttribute("inert", preview);
   keyboard.style.aspectRatio = `${area.width} / ${area.height}`;
@@ -188,12 +188,17 @@ function renderKeyboard(keys, preview = false) {
     if (!preview) {
       element.type = "button";
       element.dataset.position = key.position;
-      element.textContent = key.position;
-      element.setAttribute("aria-label", `物理位置 ${key.position}`);
-      element.addEventListener("click", () => selectPosition(key.position));
+      element.textContent = label(key.position);
+      if (element.textContent !== String(key.position)) element.title = element.textContent;
+      element.setAttribute("aria-label", `物理位置 ${key.position}${element.title ? " " + element.title : ""}`);
+      element.addEventListener("click", () => select(key.position));
     }
     return element;
   }));
+}
+
+function renderKeyboard(keys, preview = false) {
+  drawKeyboard(elements.keyboard, keys, preview, selectPosition, position => position);
   elements["keyboard-placeholder"].hidden = !preview;
 }
 
@@ -260,6 +265,7 @@ function renderState() {
     return row;
   }));
   refreshEditor();
+  editors.refresh();
 }
 
 async function disconnect(message = "", kind = "info") {
@@ -271,6 +277,7 @@ async function disconnect(message = "", kind = "info") {
   combos = [];
   choosingPort = false;
   busy = !!previous;
+  editors.setConnection(null, [], 0);
   if (elements["delete-dialog"].open) elements["delete-dialog"].close("cancel");
   resetEditor();
   setOutputOptions();
@@ -320,10 +327,12 @@ async function connect() {
     const capabilities = await attached.capabilities();
     const keys = await attached.layout(current.count);
     const saved = await attached.combos(current, capabilities);
+    const editorCaps = await attached.editorCapabilities();
     if (version !== connectionVersion) return;
     info = current;
     caps = capabilities;
     combos = saved;
+    editors.setConnection(editorCaps, keys, capabilities.layerCount);
     setOutputOptions();
     resetEditor();
     renderKeyboard(keys);
@@ -443,6 +452,10 @@ elements["editor-form"].addEventListener("submit", event => {
 });
 elements.reset.addEventListener("click", () => {
   confirmChange("コンボ設定を初期化", "GUI で保存したコンボ設定を取り消し、ファームウェアの初期設定に戻します。", "RESET");
+});
+const editors = setupEditors({
+  elements, drawKeyboard, usageLabels, run, notice,
+  state: () => ({ device, busy, info }),
 });
 if (supportsSerial) {
   navigator.serial.addEventListener("disconnect", event => {

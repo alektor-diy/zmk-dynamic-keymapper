@@ -7,6 +7,12 @@
             compatible = "zdkm,behavior-unlock";
             #binding-cells = <0>;
         };
+
+        zdkm_macro: zdkm_macro {
+            compatible = "zdkm,behavior-macro";
+            #binding-cells = <1>;
+            display-name = "ZDKM Macro";
+        };
     };
 };
 

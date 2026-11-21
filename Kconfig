@@ -10,8 +10,13 @@ config ZDKM
 	select SERIAL
 	select UART_LINE_CTRL
 	select CRC
+	select ZMK_BEHAVIOR_LOCAL_IDS
+	select ZMK_BEHAVIOR_METADATA
+	select ZMK_KEYMAP_SETTINGS_STORAGE
+	# ZMK 0.3's settings implementation references the layer-order initializer.
+	select ZMK_KEYMAP_LAYER_REORDERING
 	help
-	  Configure combos at runtime over the dedicated USB serial port.
+	  Configure combos, key bindings and macros over the dedicated USB serial port.
 	  Include <zdkm.dtsi> in the keymap to enable this module.
 
 if ZDKM

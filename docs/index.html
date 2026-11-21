@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <meta name="description" content="ZMK の動的コンボをキーボードから読み取り、物理キー位置を選んで編集します。">
+  <meta name="description" content="ZMK のキーマップ、コンボ、マクロを USB 接続で編集します。">
   <title>ZMK Dynamic Keymapper</title>
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=keymap-macros">
   <script type="module">
-    import("./app.js?v=stock-combos").catch(error => {
+    import("./app.js?v=keymap-macros").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -23,7 +23,7 @@
     <div class="header-inner">
       <div class="brand">
         <span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-        <div><strong>ZMK Dynamic Keymapper</strong><span>コンボエディター</span></div>
+        <div><strong>ZMK Dynamic Keymapper</strong><span>キーボード設定</span></div>
       </div>
       <div class="connection">
         <span id="connection-state" class="connection-state" data-state="offline" aria-live="polite">GUI 起動待ち</span>
@@ -35,19 +35,25 @@
   <main>
     <div class="intro">
       <div>
-        <h1>コンボ設定</h1>
-        <p>キーボード図から物理キーを選び、同時押しで実行する動作を設定します。</p>
+        <h1>キーボード設定</h1>
       </div>
       <dl id="device-details" class="device-details" hidden>
         <div><dt>物理キー</dt><dd id="position-count"></dd></div>
-        <div><dt>判定時間</dt><dd id="timeout"></dd></div>
+        <div><dt>コンボ判定時間</dt><dd id="timeout"></dd></div>
       </dl>
     </div>
 
     <p id="notice" class="notice" aria-live="polite" hidden></p>
     <noscript><p class="notice" data-kind="error">USB 接続を使うには、このページで JavaScript を許可してください。</p></noscript>
 
-    <div class="workspace">
+    <nav class="editor-nav" aria-label="設定画面">
+      <button id="show-combos" class="secondary" type="button" aria-pressed="true">コンボ</button>
+      <button id="show-keymap" class="secondary" type="button" aria-pressed="false">キーマップ</button>
+      <button id="show-macros" class="secondary" type="button" aria-pressed="false">マクロ</button>
+    </nav>
+    <p id="editor-availability" class="notice" hidden></p>
+
+    <div id="combos-panel" class="workspace">
       <div class="editor">
         <section class="panel" aria-labelledby="keyboard-heading">
           <div class="panel-header">
@@ -114,6 +120,53 @@
         </div>
       </aside>
     </div>
+
+    <section id="keymap-panel" class="editor" aria-label="キーマップ" hidden>
+      <div class="panel">
+        <div class="panel-header">
+          <div><h2>キーマップ</h2><p>レイヤーと変更するキーを選んでください。</p></div>
+          <button id="map-refresh" class="secondary compact" type="button">再読み込み</button>
+        </div>
+        <div id="map-layers" class="layer-picker" role="group" aria-label="レイヤー"></div>
+        <div class="keyboard-surface">
+          <div id="map-keyboard" class="keyboard" role="group" aria-label="キーマップの物理キー"></div>
+        </div>
+      </div>
+      <form id="map-form" class="panel" hidden>
+        <div class="panel-header">
+          <div><h2 id="map-selection"></h2><p id="map-current"></p></div>
+        </div>
+        <div class="editor-form">
+          <div id="map-palette" class="key-palette" role="group" aria-label="よく使うキー"></div>
+          <div class="map-fields">
+            <div><label for="map-behavior">割り当てる動作</label><select id="map-behavior" required></select></div>
+            <div id="map-parameters" class="parameter-fields"></div>
+          </div>
+          <div class="form-actions">
+            <button id="map-save" class="primary" type="submit">キーボードに保存</button>
+            <button id="map-cancel" class="secondary" type="button">選択をクリア</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section id="macros-panel" class="panel" aria-labelledby="macro-heading" hidden>
+      <div class="panel-header">
+        <div><h2 id="macro-heading">マクロ</h2><p>保存したマクロはキーマップやコンボの出力に割り当てられます。</p></div>
+      </div>
+      <form id="macro-form" class="editor-form">
+        <div class="macro-toolbar">
+          <div><label for="macro-slot">マクロ枠</label><select id="macro-slot"></select></div>
+          <button id="macro-refresh" class="secondary compact" type="button">再読み込み</button>
+        </div>
+        <p id="macro-status" class="list-empty"></p>
+        <ol id="macro-steps" class="macro-steps" aria-label="実行する手順"></ol>
+        <div class="form-actions">
+          <button id="macro-add" class="secondary" type="button">手順を追加</button>
+          <button id="macro-save" class="primary" type="submit">キーボードに保存</button>
+        </div>
+      </form>
+    </section>
     <footer>デスクトップ版 Chrome または Edge の Web Serial で接続します。設定はキーボード本体に保存されます。</footer>
   </main>
 

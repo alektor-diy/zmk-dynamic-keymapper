@@ -16,6 +16,10 @@ const RESPONSE_ERRORS = {
   NO_SPACE: "キーボードの保存領域に空きがありません。",
   STORAGE: "キーボードへの書き込みに失敗しました。",
   UPGRADE: "このコンボを編集するには新しいバージョンの設定ツールを使ってください。",
+  EDIT_BUSY: "設定を書き込めません。Studio の未保存変更を保存または破棄し、Studio を切断してから再試行してください。",
+  KEYS_HELD: "すべてのキーを離してから、もう一度保存してください。",
+  PROTECTED: "このキーには ZDKM の解除動作が割り当てられています。",
+  RESTART: "保存状態を再読み込みできませんでした。キーボードを再起動して確認してください。",
 };
 
 const INFO_STATES = new Set(["active", "pending", "invalid", "loading"]);
@@ -125,16 +129,78 @@ export class SerialDevice {
       throw error;
     }
     const [maxKeys, layerCount, count] = [
-      integer(values[0], 2, 20), integer(values[1], 1, 32), integer(values[2], 0, 319),
+      integer(values[0], 2, 20), integer(values[1], 1, 32), integer(values[2], 0, 327),
     ];
     const actions = new Map();
     for (let i = 0; i < count; i++) {
       const { values: [code, ...label] } = await this.request(`ACTION ${i}`, ["ACTION"], null);
-      const id = integer(code, 257, 575);
+      const id = integer(code, 257, 583);
       if (!label.length || actions.has(id)) throw new ConnectionError("無効な Behavior 一覧を受信しました。");
       actions.set(id, label.join(" "));
     }
     return { legacy: false, maxKeys, layerCount, actions };
+  }
+
+  async editorCapabilities() {
+    try {
+      const { values } = await this.request("FEATURES", ["FEATURES"], 5);
+      const [behaviorCount, macroSlots, macroSteps, keyPress, macro] = values.map((value, i) =>
+        integer(value, i < 3 ? 1 : 0, [65535, 8, 16, 65534, 65534][i]));
+      return { behaviorCount, macroSlots, macroSteps, keyPress, macro };
+    } catch (error) {
+      if (error instanceof ProtocolError && error.code === "UNKNOWN") return null;
+      throw error;
+    }
+  }
+
+  async keymapLayers(count) {
+    const layers = [];
+    for (let index = 0; index < count; index++) {
+      const { values: [id, ...label] } = await this.request(`LAYER ${index}`, ["LAYER"], null);
+      const layer = integer(id, 0, 255);
+      if (layer === 255) continue;
+      if (layer >= count || layers.some(item => item.id === layer)) {
+        throw new ConnectionError("無効なレイヤー一覧を受信しました。");
+      }
+      const name = label.join(" ");
+      layers.push({ id: layer, name: name && name !== "-" ? name : `レイヤー ${layer}` });
+    }
+    return layers;
+  }
+
+  async keymapBehaviors(count) {
+    const behaviors = new Map();
+    for (let index = 0; index < count; index++) {
+      const { values: [id, first, second, supported, ...label] } =
+        await this.request(`BEHAVIOR ${index}`, ["BEHAVIOR"], null);
+      const code = integer(id, 0, 65535);
+      if (code === 65535) continue;
+      behaviors.set(code, {
+        name: label.join(" "), parameters: [integer(first, 0, 3), integer(second, 0, 3)],
+        editable: !!integer(supported, 0, 1),
+      });
+    }
+    return behaviors;
+  }
+
+  async binding(layer, position) {
+    const { values: [id, ...parameters] } = await this.request(`BIND ${layer} ${position}`, ["BIND"], 3);
+    return { id: integer(id, 0, 65535), parameters: parameters.map(value => integer(value, 0, 0xffffffff)) };
+  }
+
+  async macro(slot, limit) {
+    const { values: [count, ...items] } = await this.request(`MACRO ${slot}`, ["MACRO"], null);
+    if (count === "INVALID" && items.length === 0) return null;
+    if (integer(count, 0, limit) !== items.length) throw new ConnectionError("無効なマクロを受信しました。");
+    return items.map(item => {
+      const code = integer(item, 0, 3 * 65536 + 5000);
+      const op = code >>> 16;
+      const value = code & 0xffff;
+      if (op === 3 ? value < 1 || value > 5000 : !isUsage(value)) {
+        throw new ConnectionError("無効なマクロ操作を受信しました。");
+      }
+      return { op, value };
+    });
   }
 
   async info() {

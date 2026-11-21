@@ -20,5 +20,6 @@ size_t zdkm_slot_count(void);
 size_t zdkm_action_count(void);
 const char *zdkm_action_at(size_t index, uint16_t *code);
 void zdkm_authorize(void);
+bool zdkm_keys_held(void);
 
 #endif

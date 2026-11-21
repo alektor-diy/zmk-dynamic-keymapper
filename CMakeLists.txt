@@ -1,6 +1,6 @@
 if(CONFIG_ZDKM)
   # The ZMK position event listener must be linked before the built-in listeners.
-  target_sources(app PRIVATE src/combo.c src/runtime.c src/serial.c)
+  target_sources(app PRIVATE src/combo.c src/runtime.c src/serial.c src/keymap.c src/macro.c)
   target_include_directories(app PRIVATE include)
 
   if(CONFIG_DT_HAS_ZMK_COMBOS_ENABLED)

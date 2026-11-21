@@ -6,8 +6,11 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
 #include <zmk/events/usb_conn_state_changed.h>
+#include <zmk/keymap.h>
 #include <zmk/physical_layouts.h>
 
+#include "keymap.h"
+#include "macro.h"
 #include "runtime.h"
 
 LOG_MODULE_DECLARE(zdkm);
@@ -235,6 +238,137 @@ static void send_save_result(int slot, struct zdkm_combo combo) {
     }
 }
 
+static void send_edit_result(int err) {
+    char response[32];
+    switch (err) {
+    case 0: send_line("OK SAVED"); return;
+    case -EINVAL: send_line("ERR INVALID"); return;
+    case -EPERM: send_line("ERR PROTECTED"); return;
+    case -EAGAIN: send_line("ERR KEYS_HELD"); return;
+    case -EBUSY: send_line("ERR EDIT_BUSY"); return;
+    case -EFAULT: send_line("ERR RESTART"); return;
+    default:
+        snprintk(response, sizeof(response), "ERR STORAGE %d", err);
+        send_line(response);
+    }
+}
+
+static const char *line_label(const char *label, const char *fallback) {
+    return !label || !*label || strlen(label) > 100 || strchr(label, '\r') || strchr(label, '\n')
+               ? fallback
+               : label;
+}
+
+static uint8_t param_kind(size_t count, const struct behavior_parameter_value_metadata *values) {
+    if (!count) return 0;
+    for (size_t i = 1; i < count; ++i) {
+        if (values[i].type != values[0].type) return 1;
+    }
+    switch (values[0].type) {
+    case BEHAVIOR_PARAMETER_VALUE_TYPE_NIL: return 0;
+    case BEHAVIOR_PARAMETER_VALUE_TYPE_HID_USAGE: return 2;
+    case BEHAVIOR_PARAMETER_VALUE_TYPE_LAYER_ID: return 3;
+    default: return 1;
+    }
+}
+
+static bool process_editor_command(const char *operation, char *cursor) {
+    char response[160];
+    uint16_t index;
+    if (strcmp(operation, "FEATURES") == 0) {
+        if (take_word(&cursor)) goto invalid;
+        snprintk(response, sizeof(response), "OK FEATURES %u %u %u %u %u",
+                 (unsigned int)zdkm_behavior_count(), ZDKM_MACRO_SLOTS, ZDKM_MACRO_STEPS,
+                 zmk_behavior_get_local_id(DEVICE_DT_NAME(DT_NODELABEL(kp))),
+                 zmk_behavior_get_local_id(DEVICE_DT_NAME(DT_NODELABEL(zdkm_macro))));
+    } else if (strcmp(operation, "LAYER") == 0) {
+        if (!take_number(&cursor, zdkm_layer_count() - 1, &index) || take_word(&cursor)) goto invalid;
+        uint8_t layer = zmk_keymap_layer_index_to_id(index);
+        const char *name = layer == ZMK_KEYMAP_LAYER_ID_INVAL ? NULL : zmk_keymap_layer_name(layer);
+        snprintk(response, sizeof(response), "OK LAYER %u %s", layer, line_label(name, "-"));
+    } else if (strcmp(operation, "BEHAVIOR") == 0) {
+        if (!take_number(&cursor, UINT16_MAX, &index) || take_word(&cursor)) goto invalid;
+        const struct zmk_behavior_ref *ref = zdkm_behavior_at(index);
+        if (!ref) goto invalid;
+        struct behavior_parameter_metadata info;
+        int err = behavior_get_parameter_metadata(ref->device, &info);
+        uint8_t first = 0, second = 0;
+        if (err >= 0) {
+            for (size_t i = 0; i < info.sets_len; ++i) {
+                const struct behavior_parameter_metadata_set *set = &info.sets[i];
+                uint8_t p1 = param_kind(set->param1_values_len, set->param1_values);
+                uint8_t p2 = param_kind(set->param2_values_len, set->param2_values);
+                first = (first && p1 && first != p1) ? 1 : MAX(first, p1);
+                second = (second && p2 && second != p2) ? 1 : MAX(second, p2);
+            }
+        }
+        snprintk(response, sizeof(response), "OK BEHAVIOR %u %u %u %u %s",
+                 zmk_behavior_get_local_id(ref->device->name), first, second, err >= 0,
+                 line_label(ref->metadata.display_name, ref->device->name));
+    } else if (strcmp(operation, "BIND") == 0 || strcmp(operation, "BINDSET") == 0) {
+        uint16_t position;
+        if (!take_number(&cursor, zdkm_layer_count() - 1, &index) ||
+            !take_number(&cursor, MIN(zdkm_position_count() - 1, UINT8_MAX), &position)) goto invalid;
+        if (strcmp(operation, "BINDSET") == 0) {
+            uint16_t id;
+            struct zmk_behavior_binding binding = {0};
+            if (!take_number(&cursor, UINT16_MAX - 1, &id) ||
+                !take_uint(&cursor, UINT32_MAX, &binding.param1) ||
+                !take_uint(&cursor, UINT32_MAX, &binding.param2) || take_word(&cursor)) goto invalid;
+            if (!auth_state(true)) {
+                send_line("ERR LOCKED");
+                return true;
+            }
+            binding.behavior_dev = zmk_behavior_find_behavior_name_from_local_id(id);
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
+            binding.local_id = id;
+#endif
+            send_edit_result(zdkm_set_binding(index, position, &binding));
+            return true;
+        }
+        if (take_word(&cursor)) goto invalid;
+        const struct zmk_behavior_binding *binding = zmk_keymap_get_layer_binding_at_idx(index, position);
+        snprintk(response, sizeof(response), "OK BIND %u %u %u",
+                 binding ? zmk_behavior_get_local_id(binding->behavior_dev) : UINT16_MAX,
+                 binding ? (unsigned int)binding->param1 : 0, binding ? (unsigned int)binding->param2 : 0);
+    } else if (strcmp(operation, "MACRO") == 0 || strcmp(operation, "MACROSET") == 0) {
+        struct zdkm_macro macro = {0};
+        if (!take_number(&cursor, ZDKM_MACRO_SLOTS - 1, &index)) goto invalid;
+        if (strcmp(operation, "MACROSET") == 0) {
+            uint16_t count;
+            if (!take_number(&cursor, ZDKM_MACRO_STEPS, &count)) goto invalid;
+            macro.count = count;
+            for (size_t i = 0; i < count; ++i) {
+                if (!take_uint(&cursor, (ZDKM_MACRO_WAIT << 16) | UINT16_MAX, &macro.steps[i])) goto invalid;
+            }
+            if (take_word(&cursor)) goto invalid;
+            if (!auth_state(true)) {
+                send_line("ERR LOCKED");
+                return true;
+            }
+            send_edit_result(zdkm_macro_save(index, &macro));
+            return true;
+        }
+        if (take_word(&cursor)) goto invalid;
+        if (zdkm_macro_get(index, &macro) < 0) {
+            send_line("OK MACRO INVALID");
+            return true;
+        }
+        size_t used = snprintk(response, sizeof(response), "OK MACRO %u", macro.count);
+        for (size_t i = 0; i < macro.count; ++i) {
+            used += snprintk(response + used, sizeof(response) - used, " %u", (unsigned int)macro.steps[i]);
+        }
+    } else {
+        return false;
+    }
+    send_line(response);
+    return true;
+
+invalid:
+    send_line("ERR INVALID");
+    return true;
+}
+
 static void process_command(char *cursor) {
     const char *operation = take_word(&cursor);
     char response[160];
@@ -244,6 +378,7 @@ static void process_command(char *cursor) {
         send_line("ERR FRAME");
         return;
     }
+    if (process_editor_command(operation, cursor)) return;
     if (strcmp(operation, "SET") == 0) {
         uint16_t first, second, usage;
         if (!take_number(&cursor, zdkm_slot_count() - 1, &index) ||
