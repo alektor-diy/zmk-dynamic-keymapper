@@ -1,4 +1,4 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=connect-unlock";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=unlock-wait";
 import { setupEditors } from "./editors.js?v=session-unlock";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
 import { DemoDevice } from "./demo.js?v=demo";
@@ -372,9 +372,9 @@ async function unlockOnConnect(attached, version) {
     retry.hidden = true;
     message.textContent = "キーボードに解除をリクエストしています。";
     try {
-      await attached.unlockSession(() => {
+      await attached.unlockSession(prompt => {
         if (dialog.open && version === connectionVersion) {
-          message.textContent = "20秒以内にキーボードの ZDKM 解除キーを押してください。";
+          message.textContent = prompt;
         }
       });
     } catch (error) {

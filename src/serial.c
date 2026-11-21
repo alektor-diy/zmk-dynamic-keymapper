@@ -15,7 +15,7 @@
 
 LOG_MODULE_DECLARE(zdkm);
 
-#define ARM_MS 20000
+#define LEGACY_ARM_MS 20000
 #define SESSION_TOKEN_LENGTH 32
 #define LAYER_NAME_BYTES MIN(CONFIG_ZMK_KEYMAP_LAYER_NAME_MAX_LEN - 1, 73)
 
@@ -31,7 +31,7 @@ static struct command receiving;
 static size_t received;
 static bool discarded;
 static struct k_spinlock auth_lock;
-static int64_t auth_deadline;
+static int64_t legacy_auth_deadline;
 static bool authorized;
 /* Bind repeated writes to their initiating client even if a brief DTR drop is missed. */
 static char auth_token[SESSION_TOKEN_LENGTH + 1];
@@ -43,7 +43,7 @@ static bool port_open(void) {
 
 static void clear_auth(void) {
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
-    auth_deadline = 0;
+    legacy_auth_deadline = 0;
     authorized = false;
     auth_token[0] = '\0';
     k_spin_unlock(&auth_lock, key);
@@ -56,7 +56,7 @@ void zdkm_authorize(void) {
         return;
     }
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
-    if (now < auth_deadline) {
+    if (auth_token[0] || now < legacy_auth_deadline) {
         authorized = true;
     }
     k_spin_unlock(&auth_lock, key);
@@ -70,9 +70,9 @@ static bool auth_state(bool consume, const char *token) {
     int64_t now = k_uptime_get();
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
     bool allowed = authorized && (token ? strcmp(auth_token, token) == 0
-                                        : !auth_token[0] && now < auth_deadline);
+                                        : !auth_token[0] && now < legacy_auth_deadline);
     if (consume && allowed && !token) {
-        auth_deadline = 0;
+        legacy_auth_deadline = 0;
         authorized = false;
     }
     k_spin_unlock(&auth_lock, key);
@@ -82,17 +82,17 @@ static bool auth_state(bool consume, const char *token) {
 static bool auth_needs_port_check(void) {
     int64_t now = k_uptime_get();
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
-    bool armed = (authorized && auth_token[0]) || now < auth_deadline;
+    bool armed = auth_token[0] || now < legacy_auth_deadline;
     k_spin_unlock(&auth_lock, key);
     return armed;
 }
 
 static bool arm_auth(const char *token) {
-    int64_t deadline = k_uptime_get() + ARM_MS;
+    int64_t deadline = token ? 0 : k_uptime_get() + LEGACY_ARM_MS;
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
     bool unlocked = token && authorized && strcmp(auth_token, token) == 0;
     if (!unlocked) {
-        auth_deadline = deadline;
+        legacy_auth_deadline = deadline;
         authorized = false;
         if (token) memcpy(auth_token, token, sizeof(auth_token));
         else auth_token[0] = '\0';
@@ -585,6 +585,8 @@ static void process_command(char *cursor) {
         send_line("OK ZDKM 1");
     } else if (strcmp(operation, "SESSION") == 0) {
         send_line("OK SESSION");
+    } else if (strcmp(operation, "SESSIONWAIT") == 0) {
+        send_line("OK SESSIONWAIT");
     } else if (strcmp(operation, "INFO") == 0) {
         snprintk(response, sizeof(response), "OK INFO %u %u %u %s",
                  (unsigned int)zdkm_position_count(), (unsigned int)zdkm_slot_count(),

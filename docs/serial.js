@@ -23,6 +23,7 @@ const RESPONSE_ERRORS = {
 };
 
 const INFO_STATES = new Set(["active", "pending", "invalid", "loading"]);
+const LEGACY_UNLOCK_TIMEOUT = 20000;
 export const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function integer(value, minimum, maximum) {
@@ -73,6 +74,7 @@ export class SerialDevice {
     this.buffer = "";
     this.closing = null;
     this.sessionToken = undefined;
+    this.sessionWaitUnlimited = false;
   }
 
   async withTimeout(operation) {
@@ -267,6 +269,12 @@ export class SerialDevice {
     if (this.sessionToken === undefined) {
       try {
         await this.request("SESSION", ["SESSION"]);
+        try {
+          await this.request("SESSIONWAIT", ["SESSIONWAIT"]);
+          this.sessionWaitUnlimited = true;
+        } catch (error) {
+          if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
+        }
         const nonce = crypto.getRandomValues(new Uint8Array(16));
         this.sessionToken = Array.from(nonce, byte => byte.toString(16).padStart(2, "0")).join("");
       } catch (error) {
@@ -281,15 +289,14 @@ export class SerialDevice {
     const token = this.sessionToken;
     const { response } = await this.request(`ARMSESSION ${token}`, ["ARMED", "UNLOCKED"]);
     if (response === "UNLOCKED") return;
-    onArmed();
-    await this.waitForUnlock(`SESSIONAUTH ${token}`);
+    onArmed(this.sessionWaitUnlimited ? "キーボードの ZDKM 解除キーを押してください。" :
+      "20秒以内にキーボードの ZDKM 解除キーを押してください。");
+    await this.waitForUnlock(`SESSIONAUTH ${token}`, this.sessionWaitUnlimited ? Infinity : LEGACY_UNLOCK_TIMEOUT);
   }
 
   async save(command, notify) {
     if (await this.supportsSessionUnlock()) {
-      await this.unlockSession(() => {
-        notify("この接続中の書き込みを許可するには、20秒以内にキーボードの ZDKM 解除キーを押してください。");
-      });
+      await this.unlockSession(notify);
       await this.request(`WRITE ${this.sessionToken} ${command}`, ["SAVED"]);
     } else {
       await this.request("ARM", ["ARMED"]);
@@ -300,8 +307,8 @@ export class SerialDevice {
     notify("保存しました。すべてのキーを離すと適用されます。");
   }
 
-  async waitForUnlock(query) {
-    const deadline = Date.now() + 20000;
+  async waitForUnlock(query, timeout = LEGACY_UNLOCK_TIMEOUT) {
+    const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       const { response } = await this.request(query, ["LOCKED", "UNLOCKED"]);
       if (response === "UNLOCKED") return;
