@@ -115,7 +115,7 @@ export class SerialDevice {
     if (kind !== "OK" || !expected.includes(response) || (count !== null && values.length !== count)) {
       throw new ConnectionError("キーボードから想定外の応答が返されました。");
     }
-    return { response, values };
+    return { response, values, line };
   }
 
   async capabilities() {
@@ -146,24 +146,32 @@ export class SerialDevice {
       const { values } = await this.request("FEATURES", ["FEATURES"], 5);
       const [behaviorCount, macroSlots, macroSteps, keyPress, macro] = values.map((value, i) =>
         integer(value, i < 3 ? 1 : 0, [65535, 8, 16, 65534, 65534][i]));
-      return { behaviorCount, macroSlots, macroSteps, keyPress, macro };
+      let layerNameBytes = 0;
+      try {
+        const info = await this.request("LAYEREDIT", ["LAYEREDIT"], 1);
+        layerNameBytes = integer(info.values[0], 0, 73);
+      } catch (error) {
+        if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
+      }
+      return { behaviorCount, macroSlots, macroSteps, keyPress, macro, layerNameBytes };
     } catch (error) {
       if (error instanceof ProtocolError && error.code === "UNKNOWN") return null;
       throw error;
     }
   }
 
-  async keymapLayers(count) {
+  async keymapLayers(count, layerNameBytes) {
     const layers = [];
     for (let index = 0; index < count; index++) {
-      const { values: [id, ...label] } = await this.request(`LAYER ${index}`, ["LAYER"], null);
+      const { values: [id], line } = await this.request(`LAYER ${index}`, ["LAYER"], null);
       const layer = integer(id, 0, 255);
       if (layer === 255) continue;
       if (layer >= count || layers.some(item => item.id === layer)) {
         throw new ConnectionError("無効なレイヤー一覧を受信しました。");
       }
-      const name = label.join(" ");
-      layers.push({ id: layer, name: name && name !== "-" ? name : `レイヤー ${layer}` });
+      const label = line.slice(`OK LAYER ${id} `.length);
+      const savedName = !layerNameBytes && label === "-" ? "" : label;
+      layers.push({ id: layer, name: savedName || `レイヤー ${layer}`, savedName });
     }
     return layers;
   }

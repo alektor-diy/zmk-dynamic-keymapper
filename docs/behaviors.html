@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>割り当てる動作の一覧 · ZMK Dynamic Keymapper</title>
+  <link rel="stylesheet" href="./styles.css?v=layer-editor">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner"><a href="./">ZMK Dynamic Keymapper</a></div>
+  </header>
+  <main class="editor behavior-guide">
+    <h1>割り当てる動作の一覧</h1>
+    <p>ZMK と ZDKM の主な動作を解説します。メニューの項目は、接続したファームウェアで利用できる動作に応じて変わります。</p>
+    <section class="panel" aria-labelledby="key-actions">
+      <h2 id="key-actions">キー入力とマクロ</h2>
+      <dl>
+        <dt>Key Press <code>&amp;kp</code></dt><dd>選んだキーを押している間、そのキーを押下します。文字、修飾キー、メディアキーなどに使います。</dd>
+        <dt>Mod-Tap <code>&amp;mt</code></dt><dd>長押しのキーとタップのキーを別々に指定します。たとえば長押しを <code>LCTRL</code>、タップを <code>A</code> にできます。</dd>
+        <dt>Key Toggle <code>&amp;kt</code></dt><dd>指定キーの押下状態を切り替えます。もう一度押すと解放します。</dd>
+        <dt>Sticky Key <code>&amp;sk</code></dt><dd>指定キーを次の入力まで保持します。たとえば一度押した Shift を次の一文字に効かせます。</dd>
+        <dt>Grave/Escape <code>&amp;gresc</code></dt><dd>通常は Esc を出し、Shift または GUI キーを押しているときは Grave（US のバッククォート）を出します。</dd>
+        <dt>Caps Word <code>&amp;caps_word</code></dt><dd>英字を大文字にするモードです。区切りになるキーを押すと解除されます。</dd>
+        <dt>Key Repeat <code>&amp;key_repeat</code></dt><dd>直前に出力したキーをもう一度送ります。</dd>
+        <dt>Mouse Key Press <code>&amp;mkp</code></dt><dd>マウスのボタンを押します。左は <code>1</code>、右は <code>2</code>、中央は <code>4</code> です。</dd>
+        <dt>ZDKM Macro <code>&amp;zdkm_macro</code></dt><dd>マクロ画面で保存した枠を実行します。割り当て時に枠を選びます。</dd>
+      </dl>
+    </section>
+    <section class="panel" aria-labelledby="layer-actions">
+      <h2 id="layer-actions">レイヤーと空きキー</h2>
+      <dl>
+        <dt>Momentary Layer <code>&amp;mo</code></dt><dd>押している間だけ、指定レイヤーを有効にします。</dd>
+        <dt>Layer-Tap <code>&amp;lt</code></dt><dd>長押しで指定レイヤーを有効にし、タップでは指定キーを出力します。</dd>
+        <dt>Toggle Layer <code>&amp;tog</code></dt><dd>指定レイヤーの有効・無効を押すたびに切り替えます。</dd>
+        <dt>Sticky Layer <code>&amp;sl</code></dt><dd>次の入力まで指定レイヤーを有効にします。</dd>
+        <dt>To Layer <code>&amp;to</code></dt><dd>指定レイヤーに切り替えます。既定レイヤーを除くほかのレイヤーは無効になります。</dd>
+        <dt>Transparent <code>&amp;trans</code></dt><dd>下にある有効レイヤーの同じ位置の割り当てを使います。</dd>
+        <dt>None <code>&amp;none</code></dt><dd>その位置の入力を無効にします。下のレイヤーにも入力を渡しません。</dd>
+      </dl>
+    </section>
+    <section class="panel" aria-labelledby="system-actions">
+      <h2 id="system-actions">接続と本体操作</h2>
+      <dl>
+        <dt>Bluetooth <code>&amp;bt</code></dt><dd>Bluetooth プロファイルを操作します。ZMK v0.3 では <code>1, 0</code> が次へ、<code>2, 0</code> が前へ、<code>3, プロファイル番号</code> が指定先へ切り替える例です。ペアリングを消す操作もあります。</dd>
+        <dt>Output Selection <code>&amp;out</code></dt><dd>入力の出力先を選びます。<code>0</code> で USB／BLE を切り替え、<code>1</code> で USB、<code>2</code> で BLE を選びます。</dd>
+        <dt>Reset <code>&amp;sys_reset</code></dt><dd>キーボードを再起動します。</dd>
+        <dt>Bootloader <code>&amp;bootloader</code></dt><dd>ファームウェアを書き込むためのブートローダーに入ります。</dd>
+        <dt>Studio Unlock <code>&amp;studio_unlock</code></dt><dd>ZMK Studio 側の設定ロックを解除します。</dd>
+        <dt>zdkm_unlock <code>&amp;zdkm_unlock</code></dt><dd>Web GUI が書き込みを待っている間に押すと、ZDKM での書き込みを1回許可します。</dd>
+      </dl>
+    </section>
+    <footer><a href="https://zmk.dev/docs/keymaps/behaviors">ZMK 公式の Behavior 一覧</a></footer>
+  </main>
+</body>
+</html>

@@ -1,9 +1,11 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=keymap-macros";
-import { setupEditors } from "./editors.js?v=keyboard-palette";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=layer-editor";
+import { setupEditors } from "./editors.js?v=editor-options";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
+import { DemoDevice } from "./demo.js?v=demo";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
+const unavailableSerial = "Web Serial が利用できません。USB 接続には、HTTPS または localhost でデスクトップ版 Chrome や Edge を使ってください。";
 const usageLabels = new Map();
 
 for (let i = 0; i < 26; i++) usageLabels.set(4 + i, String.fromCharCode(65 + i));
@@ -232,19 +234,22 @@ function edit(combo) {
 }
 
 function renderState() {
+  const demo = device instanceof DemoDevice;
   const connection = elements["connection-state"];
-  connection.textContent = device ? "USB 接続中" : choosingPort ? "ポート選択待ち" : busy ? "接続を処理中" : "未接続";
-  connection.dataset.state = device ? "online" : busy ? "working" : "offline";
-  elements.connect.textContent = device ? "切断" : choosingPort ? "キャンセル" : "USB で接続";
-  elements.connect.disabled = !supportsSerial || (busy && !device && !choosingPort);
-  elements["device-details"].hidden = !info;
+  connection.textContent = demo ? "デモモード" : device ? "USB 接続中" :
+    choosingPort ? "ポート選択待ち" : busy ? "接続を処理中" : "未接続";
+  connection.dataset.state = demo ? "demo" : device ? "online" : busy ? "working" : "offline";
+  elements.connect.textContent = device && !demo ? "切断" : choosingPort ? "キャンセル" : "USB で接続";
+  elements.connect.disabled = !supportsSerial || demo || (busy && !device && !choosingPort);
+  elements.demo.textContent = demo ? "デモを終了" : "デモを試す";
+  elements.demo.disabled = busy || (!!device && !demo);
+  elements["demo-notice"].hidden = !demo;
+  for (const id of ["save", "map-save", "macro-save"]) {
+    elements[id].textContent = demo ? "デモに保存" : "キーボードに保存";
+  }
   elements.refresh.disabled = !device || busy;
   elements.recovery.hidden = info?.status !== "invalid";
   elements.reset.disabled = busy;
-  if (info) {
-    elements["position-count"].textContent = info.count;
-    elements.timeout.textContent = `${info.timeout} ms`;
-  }
   elements["slot-count"].textContent = info ? `${combos.length} / ${info.slots} 件` : "接続すると一覧を表示します。";
   elements["list-empty"].hidden = !!combos.length || info?.status === "invalid";
   elements["list-empty"].textContent = info ? "保存済みコンボはありません。" : "キーボードは未接続です。";
@@ -303,6 +308,48 @@ function showInfoStatus() {
   else if (info.status === "invalid") notice("キーボードの保存済みコンボが現在の設定と互換性がありません。", "error");
 }
 
+async function loadDevice(attached, version) {
+  const current = await attached.info();
+  const capabilities = await attached.capabilities();
+  const keys = await attached.layout(current.count);
+  const saved = await attached.combos(current, capabilities);
+  const editorCaps = await attached.editorCapabilities();
+  if (version !== connectionVersion) return;
+  info = current;
+  caps = capabilities;
+  combos = saved;
+  editors.setConnection(editorCaps, keys, capabilities.layerCount);
+  setOutputOptions();
+  resetEditor();
+  renderKeyboard(keys);
+  notice();
+  showInfoStatus();
+}
+
+async function startDemo() {
+  if (device instanceof DemoDevice && !busy) {
+    await disconnect(supportsSerial ? "" : unavailableSerial, "info");
+    return;
+  }
+  if (device || busy) return;
+  const version = ++connectionVersion;
+  busy = true;
+  const sample = new DemoDevice(previewKeys);
+  device = sample;
+  renderState();
+  try {
+    await loadDevice(sample, version);
+  } catch {
+    if (version === connectionVersion) await disconnect("デモを読み込めませんでした。", "error");
+  } finally {
+    if (version === connectionVersion) {
+      busy = false;
+      renderState();
+      editors.loadPage();
+    }
+  }
+}
+
 async function connect() {
   busy = true;
   choosingPort = true;
@@ -329,21 +376,7 @@ async function connect() {
     device = attached;
     renderState();
     notice("物理キーの配置を読み込んでいます。");
-    const current = await attached.info();
-    const capabilities = await attached.capabilities();
-    const keys = await attached.layout(current.count);
-    const saved = await attached.combos(current, capabilities);
-    const editorCaps = await attached.editorCapabilities();
-    if (version !== connectionVersion) return;
-    info = current;
-    caps = capabilities;
-    combos = saved;
-    editors.setConnection(editorCaps, keys, capabilities.layerCount);
-    setOutputOptions();
-    resetEditor();
-    renderKeyboard(keys);
-    notice();
-    showInfoStatus();
+    await loadDevice(attached, version);
   } catch (error) {
     if (version !== connectionVersion) return;
     if (error.name === "NotFoundError") {
@@ -412,7 +445,9 @@ async function change(command) {
     info = current;
     combos = saved;
     resetEditor();
-    notice(info.status === "active" ? "変更をキーボードに保存して適用しました。" : "");
+    if (info.status === "active") {
+      notice(attached instanceof DemoDevice ? "デモに変更を保存しました。" : "変更をキーボードに保存して適用しました。");
+    }
     showInfoStatus();
   });
 }
@@ -431,6 +466,7 @@ function confirmChange(title, message, command) {
 }
 
 elements.connect.addEventListener("click", () => { void (device || choosingPort ? disconnect() : connect()); });
+elements.demo.addEventListener("click", () => { void startDemo(); });
 elements.refresh.addEventListener("click", () => { void reload(); });
 elements.clear.addEventListener("click", () => {
   resetEditor();
@@ -458,7 +494,9 @@ elements["editor-form"].addEventListener("submit", event => {
   void change(command);
 });
 elements.reset.addEventListener("click", () => {
-  confirmChange("コンボ設定を初期化", "GUI で保存したコンボ設定を取り消し、ファームウェアの初期設定に戻します。", "RESET");
+  const message = device instanceof DemoDevice ? "デモのコンボを初期状態に戻します。" :
+    "GUI で保存したコンボ設定を取り消し、ファームウェアの初期設定に戻します。";
+  confirmChange("コンボ設定を初期化", message, "RESET");
 });
 const editors = setupEditors({
   elements, drawKeyboard, usageLabels, run, notice,
@@ -471,7 +509,7 @@ if (supportsSerial) {
     }
   });
 } else {
-  notice("Web Serial が利用できません。デスクトップ版 Chrome または Edge で HTTPS または localhost から開いてください。", "error");
+  notice(unavailableSerial, "info");
 }
 setOutputOptions();
 resetEditor();

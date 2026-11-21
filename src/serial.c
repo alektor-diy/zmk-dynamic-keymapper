@@ -16,6 +16,7 @@
 LOG_MODULE_DECLARE(zdkm);
 
 #define ARM_MS 20000
+#define LAYER_NAME_BYTES MIN(CONFIG_ZMK_KEYMAP_LAYER_NAME_MAX_LEN - 1, 73)
 
 BUILD_ASSERT(DT_HAS_CHOSEN(zdkm_uart), "zdkm: enable the zdkm-usb snippet");
 static const struct device *const uart = DEVICE_DT_GET(DT_CHOSEN(zdkm_uart));
@@ -272,6 +273,24 @@ static uint8_t param_kind(size_t count, const struct behavior_parameter_value_me
     }
 }
 
+static bool valid_layer_name(const uint8_t *name, size_t len) {
+    if (!len || name[0] == ' ' || name[len - 1] == ' ') return false;
+    for (size_t i = 0; i < len;) {
+        uint8_t lead = name[i++];
+        if (lead >= ' ' && lead < 0x7f) continue;
+        if (lead < 0xc2 || lead > 0xf4) return false;
+        size_t trailing = lead < 0xe0 ? 1 : lead < 0xf0 ? 2 : 3;
+        if (len - i < trailing) return false;
+        uint8_t first = name[i];
+        if ((lead == 0xe0 && first < 0xa0) || (lead == 0xed && first >= 0xa0) ||
+            (lead == 0xf0 && first < 0x90) || (lead == 0xf4 && first >= 0x90)) return false;
+        while (trailing--) {
+            if ((name[i++] & 0xc0) != 0x80) return false;
+        }
+    }
+    return true;
+}
+
 static bool process_editor_command(const char *operation, char *cursor) {
     char response[160];
     uint16_t index;
@@ -281,11 +300,30 @@ static bool process_editor_command(const char *operation, char *cursor) {
                  (unsigned int)zdkm_behavior_count(), ZDKM_MACRO_SLOTS, ZDKM_MACRO_STEPS,
                  zmk_behavior_get_local_id(DEVICE_DT_NAME(DT_NODELABEL(kp))),
                  zmk_behavior_get_local_id(DEVICE_DT_NAME(DT_NODELABEL(zdkm_macro))));
+    } else if (strcmp(operation, "LAYEREDIT") == 0) {
+        if (take_word(&cursor)) goto invalid;
+        snprintk(response, sizeof(response), "OK LAYEREDIT %u", LAYER_NAME_BYTES);
+    } else if (strcmp(operation, "LAYERSET") == 0) {
+        if (!take_number(&cursor, zdkm_layer_count() - 1, &index)) goto invalid;
+        const char *hex = take_word(&cursor);
+        uint8_t name[LAYER_NAME_BYTES + 1];
+        if (!hex || take_word(&cursor)) goto invalid;
+        size_t size = strlen(hex);
+        if ((size & 1) || size > 2 * LAYER_NAME_BYTES) goto invalid;
+        size_t len = hex2bin(hex, size, name, LAYER_NAME_BYTES);
+        if (len != size / 2 || !valid_layer_name(name, len)) goto invalid;
+        name[len] = 0;
+        if (!auth_state(true)) {
+            send_line("ERR LOCKED");
+            return true;
+        }
+        send_edit_result(zdkm_rename_layer(index, (const char *)name));
+        return true;
     } else if (strcmp(operation, "LAYER") == 0) {
         if (!take_number(&cursor, zdkm_layer_count() - 1, &index) || take_word(&cursor)) goto invalid;
         uint8_t layer = zmk_keymap_layer_index_to_id(index);
         const char *name = layer == ZMK_KEYMAP_LAYER_ID_INVAL ? NULL : zmk_keymap_layer_name(layer);
-        snprintk(response, sizeof(response), "OK LAYER %u %s", layer, line_label(name, "-"));
+        snprintk(response, sizeof(response), "OK LAYER %u %s", layer, line_label(name, ""));
     } else if (strcmp(operation, "BEHAVIOR") == 0) {
         if (!take_number(&cursor, UINT16_MAX, &index) || take_word(&cursor)) goto invalid;
         const struct zmk_behavior_ref *ref = zdkm_behavior_at(index);
