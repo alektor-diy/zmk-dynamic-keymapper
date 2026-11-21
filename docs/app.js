@@ -1,5 +1,5 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=layer-editor";
-import { setupEditors } from "./editors.js?v=editor-options";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=connect-unlock";
+import { setupEditors } from "./editors.js?v=session-unlock";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
 import { DemoDevice } from "./demo.js?v=demo";
 
@@ -53,6 +53,7 @@ let combos = [];
 let editingSlot = null;
 let busy = false;
 let choosingPort = false;
+let legacyUnlock = false;
 let connectionVersion = 0;
 
 function notice(message = "", kind = "info") {
@@ -235,15 +236,17 @@ function edit(combo) {
 
 function renderState() {
   const demo = device instanceof DemoDevice;
+  const awaitingUnlock = elements["unlock-dialog"].open;
   const connection = elements["connection-state"];
-  connection.textContent = demo ? "デモモード" : device ? "USB 接続中" :
+  connection.textContent = demo ? "デモモード" : awaitingUnlock ? "ロック解除待ち" : device ? "USB 接続中" :
     choosingPort ? "ポート選択待ち" : busy ? "接続を処理中" : "未接続";
-  connection.dataset.state = demo ? "demo" : device ? "online" : busy ? "working" : "offline";
+  connection.dataset.state = demo ? "demo" : awaitingUnlock ? "working" : device ? "online" : busy ? "working" : "offline";
   elements.connect.textContent = device && !demo ? "切断" : choosingPort ? "キャンセル" : "USB で接続";
   elements.connect.disabled = !supportsSerial || demo || (busy && !device && !choosingPort);
   elements.demo.textContent = demo ? "デモを終了" : "デモを試す";
   elements.demo.disabled = busy || (!!device && !demo);
   elements["demo-notice"].hidden = !demo;
+  elements["legacy-unlock-notice"].hidden = !legacyUnlock;
   for (const id of ["save", "map-save", "macro-save"]) {
     elements[id].textContent = demo ? "デモに保存" : "キーボードに保存";
   }
@@ -287,7 +290,9 @@ async function disconnect(message = "", kind = "info") {
   caps = null;
   combos = [];
   choosingPort = false;
+  legacyUnlock = false;
   busy = !!previous;
+  if (elements["unlock-dialog"].open) elements["unlock-dialog"].close("disconnect");
   editors.setConnection(null, [], 0);
   if (elements["delete-dialog"].open) elements["delete-dialog"].close("cancel");
   resetEditor();
@@ -350,6 +355,53 @@ async function startDemo() {
   }
 }
 
+async function unlockOnConnect(attached, version) {
+  const supported = await attached.supportsSessionUnlock();
+  if (version !== connectionVersion) return false;
+  if (!supported) {
+    legacyUnlock = true;
+    return true;
+  }
+  const dialog = elements["unlock-dialog"];
+  const message = elements["unlock-status"];
+  const retry = elements["unlock-retry"];
+  dialog.returnValue = "cancel";
+  dialog.showModal();
+  renderState();
+  while (dialog.open && version === connectionVersion) {
+    retry.hidden = true;
+    message.textContent = "キーボードに解除をリクエストしています。";
+    try {
+      await attached.unlockSession(() => {
+        if (dialog.open && version === connectionVersion) {
+          message.textContent = "20秒以内にキーボードの ZDKM 解除キーを押してください。";
+        }
+      });
+    } catch (error) {
+      if (!dialog.open || version !== connectionVersion) return false;
+      if (error instanceof ConnectionError) throw error;
+      message.textContent = error.message;
+      retry.hidden = false;
+      retry.focus();
+      const again = await new Promise(resolve => {
+        const listeners = new AbortController();
+        const finish = result => {
+          listeners.abort();
+          resolve(result);
+        };
+        retry.addEventListener("click", () => finish(true), { signal: listeners.signal });
+        dialog.addEventListener("close", () => finish(false), { signal: listeners.signal });
+      });
+      if (!again) return false;
+      continue;
+    }
+    if (!dialog.open || version !== connectionVersion) return false;
+    dialog.close("unlocked");
+    return true;
+  }
+  return false;
+}
+
 async function connect() {
   busy = true;
   choosingPort = true;
@@ -374,6 +426,8 @@ async function connect() {
       return;
     }
     device = attached;
+    renderState();
+    if (!await unlockOnConnect(attached, version) || version !== connectionVersion) return;
     renderState();
     notice("物理キーの配置を読み込んでいます。");
     await loadDevice(attached, version);
@@ -466,6 +520,9 @@ function confirmChange(title, message, command) {
 }
 
 elements.connect.addEventListener("click", () => { void (device || choosingPort ? disconnect() : connect()); });
+elements["unlock-dialog"].addEventListener("close", event => {
+  if (event.currentTarget.returnValue === "cancel") void disconnect("ロック解除をキャンセルしたため、切断しました。");
+});
 elements.demo.addEventListener("click", () => { void startDemo(); });
 elements.refresh.addEventListener("click", () => { void reload(); });
 elements.clear.addEventListener("click", () => {

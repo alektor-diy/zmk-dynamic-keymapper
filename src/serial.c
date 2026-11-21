@@ -16,13 +16,14 @@
 LOG_MODULE_DECLARE(zdkm);
 
 #define ARM_MS 20000
+#define SESSION_TOKEN_LENGTH 32
 #define LAYER_NAME_BYTES MIN(CONFIG_ZMK_KEYMAP_LAYER_NAME_MAX_LEN - 1, 73)
 
 BUILD_ASSERT(DT_HAS_CHOSEN(zdkm_uart), "zdkm: enable the zdkm-usb snippet");
 static const struct device *const uart = DEVICE_DT_GET(DT_CHOSEN(zdkm_uart));
 
 struct command {
-    char line[160];
+    char line[160 + sizeof("WRITE ") - 1 + SESSION_TOKEN_LENGTH + 1];
 };
 
 K_MSGQ_DEFINE(commands, sizeof(struct command), 2, 1);
@@ -32,6 +33,8 @@ static bool discarded;
 static struct k_spinlock auth_lock;
 static int64_t auth_deadline;
 static bool authorized;
+/* Bind repeated writes to their initiating client even if a brief DTR drop is missed. */
+static char auth_token[SESSION_TOKEN_LENGTH + 1];
 
 static bool port_open(void) {
     uint32_t dtr = 0;
@@ -42,6 +45,7 @@ static void clear_auth(void) {
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
     auth_deadline = 0;
     authorized = false;
+    auth_token[0] = '\0';
     k_spin_unlock(&auth_lock, key);
 }
 
@@ -58,11 +62,16 @@ void zdkm_authorize(void) {
     k_spin_unlock(&auth_lock, key);
 }
 
-static bool auth_state(bool consume) {
+static bool auth_state(bool consume, const char *token) {
+    if (!port_open()) {
+        clear_auth();
+        return false;
+    }
     int64_t now = k_uptime_get();
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
-    bool allowed = authorized && now < auth_deadline;
-    if (consume && allowed) {
+    bool allowed = authorized && (token ? strcmp(auth_token, token) == 0
+                                        : !auth_token[0] && now < auth_deadline);
+    if (consume && allowed && !token) {
         auth_deadline = 0;
         authorized = false;
     }
@@ -70,12 +79,26 @@ static bool auth_state(bool consume) {
     return allowed;
 }
 
-static bool auth_armed(void) {
+static bool auth_needs_port_check(void) {
     int64_t now = k_uptime_get();
     k_spinlock_key_t key = k_spin_lock(&auth_lock);
-    bool armed = now < auth_deadline;
+    bool armed = (authorized && auth_token[0]) || now < auth_deadline;
     k_spin_unlock(&auth_lock, key);
     return armed;
+}
+
+static bool arm_auth(const char *token) {
+    int64_t deadline = k_uptime_get() + ARM_MS;
+    k_spinlock_key_t key = k_spin_lock(&auth_lock);
+    bool unlocked = token && authorized && strcmp(auth_token, token) == 0;
+    if (!unlocked) {
+        auth_deadline = deadline;
+        authorized = false;
+        if (token) memcpy(auth_token, token, sizeof(auth_token));
+        else auth_token[0] = '\0';
+    }
+    k_spin_unlock(&auth_lock, key);
+    return unlocked;
 }
 
 static int usb_state_listener(const zmk_event_t *event) {
@@ -157,6 +180,16 @@ static char *take_word(char **cursor) {
     return word;
 }
 
+static const char *take_session_token(char **cursor) {
+    const char *token = take_word(cursor);
+    if (!token || strlen(token) != SESSION_TOKEN_LENGTH) return NULL;
+    for (size_t i = 0; i < SESSION_TOKEN_LENGTH; ++i) {
+        char c = token[i];
+        if ((c < '0' || c > '9') && (c < 'a' || c > 'f')) return NULL;
+    }
+    return token;
+}
+
 static bool take_uint(char **cursor, uint32_t limit, uint32_t *result) {
     const char *word = take_word(cursor);
     if (!word) {
@@ -206,8 +239,8 @@ static const char *status_name(enum zdkm_status status) {
     }
 }
 
-static void send_save_result(int slot, struct zdkm_combo combo) {
-    if (!auth_state(true)) {
+static void send_save_result(int slot, struct zdkm_combo combo, const char *token) {
+    if (!auth_state(true, token)) {
         send_line("ERR LOCKED");
         return;
     }
@@ -291,7 +324,7 @@ static bool valid_layer_name(const uint8_t *name, size_t len) {
     return true;
 }
 
-static bool process_editor_command(const char *operation, char *cursor) {
+static bool process_editor_command(const char *operation, char *cursor, const char *token) {
     char response[160];
     uint16_t index;
     if (strcmp(operation, "FEATURES") == 0) {
@@ -313,7 +346,7 @@ static bool process_editor_command(const char *operation, char *cursor) {
         size_t len = hex2bin(hex, size, name, LAYER_NAME_BYTES);
         if (len != size / 2 || !valid_layer_name(name, len)) goto invalid;
         name[len] = 0;
-        if (!auth_state(true)) {
+        if (!auth_state(true, token)) {
             send_line("ERR LOCKED");
             return true;
         }
@@ -353,7 +386,7 @@ static bool process_editor_command(const char *operation, char *cursor) {
             if (!take_number(&cursor, UINT16_MAX - 1, &id) ||
                 !take_uint(&cursor, UINT32_MAX, &binding.param1) ||
                 !take_uint(&cursor, UINT32_MAX, &binding.param2) || take_word(&cursor)) goto invalid;
-            if (!auth_state(true)) {
+            if (!auth_state(true, token)) {
                 send_line("ERR LOCKED");
                 return true;
             }
@@ -380,7 +413,7 @@ static bool process_editor_command(const char *operation, char *cursor) {
                 if (!take_uint(&cursor, (ZDKM_MACRO_WAIT << 16) | UINT16_MAX, &macro.steps[i])) goto invalid;
             }
             if (take_word(&cursor)) goto invalid;
-            if (!auth_state(true)) {
+            if (!auth_state(true, token)) {
                 send_line("ERR LOCKED");
                 return true;
             }
@@ -409,6 +442,7 @@ invalid:
 
 static void process_command(char *cursor) {
     const char *operation = take_word(&cursor);
+    const char *token = NULL;
     char response[160];
     uint16_t index;
 
@@ -416,7 +450,30 @@ static void process_command(char *cursor) {
         send_line("ERR FRAME");
         return;
     }
-    if (process_editor_command(operation, cursor)) return;
+    if (strcmp(operation, "ARMSESSION") == 0 || strcmp(operation, "SESSIONAUTH") == 0) {
+        token = take_session_token(&cursor);
+        if (!token || take_word(&cursor)) {
+            send_line("ERR INVALID");
+        } else if (strcmp(operation, "ARMSESSION") == 0) {
+            send_line(arm_auth(token) ? "OK UNLOCKED" : "OK ARMED");
+        } else {
+            send_line(auth_state(false, token) ? "OK UNLOCKED" : "OK LOCKED");
+        }
+        return;
+    }
+    if (strcmp(operation, "WRITE") == 0) {
+        token = take_session_token(&cursor);
+        operation = take_word(&cursor);
+        if (!token || !operation) {
+            send_line("ERR INVALID");
+            return;
+        }
+        if (!auth_state(false, token)) {
+            send_line("ERR LOCKED");
+            return;
+        }
+    }
+    if (process_editor_command(operation, cursor, token)) return;
     if (strcmp(operation, "SET") == 0) {
         uint16_t first, second, usage;
         if (!take_number(&cursor, zdkm_slot_count() - 1, &index) ||
@@ -437,7 +494,7 @@ static void process_command(char *cursor) {
             .count = 2,
             .output = usage,
             .timeout_ms = CONFIG_ZDKM_COMBO_TIMEOUT_MS,
-        });
+        }, token);
         return;
     }
     if (strcmp(operation, "PUT") == 0) {
@@ -453,7 +510,7 @@ static void process_command(char *cursor) {
             return;
         }
         combo.slow_release = slow;
-        send_save_result(index, combo);
+        send_save_result(index, combo, token);
         return;
     }
     if (strcmp(operation, "SLOT") == 0 || strcmp(operation, "COMBO") == 0 ||
@@ -463,7 +520,7 @@ static void process_command(char *cursor) {
             return;
         }
         if (strcmp(operation, "DEL") == 0) {
-            send_save_result(index, (struct zdkm_combo){0});
+            send_save_result(index, (struct zdkm_combo){0}, token);
         } else {
             struct zdkm_combo combo = zdkm_get_combo(index);
             if (strcmp(operation, "SLOT") == 0) {
@@ -526,6 +583,8 @@ static void process_command(char *cursor) {
     } else if (strcmp(operation, "HELLO") == 0) {
         clear_auth();
         send_line("OK ZDKM 1");
+    } else if (strcmp(operation, "SESSION") == 0) {
+        send_line("OK SESSION");
     } else if (strcmp(operation, "INFO") == 0) {
         snprintk(response, sizeof(response), "OK INFO %u %u %u %s",
                  (unsigned int)zdkm_position_count(), (unsigned int)zdkm_slot_count(),
@@ -537,16 +596,12 @@ static void process_command(char *cursor) {
                  (unsigned int)zdkm_action_count());
         send_line(response);
     } else if (strcmp(operation, "ARM") == 0) {
-        int64_t deadline = k_uptime_get() + ARM_MS;
-        k_spinlock_key_t key = k_spin_lock(&auth_lock);
-        auth_deadline = deadline;
-        authorized = false;
-        k_spin_unlock(&auth_lock, key);
+        arm_auth(NULL);
         send_line("OK ARMED");
     } else if (strcmp(operation, "AUTH") == 0) {
-        send_line(auth_state(false) ? "OK UNLOCKED" : "OK LOCKED");
+        send_line(auth_state(false, NULL) ? "OK UNLOCKED" : "OK LOCKED");
     } else if (strcmp(operation, "RESET") == 0) {
-        send_save_result(-1, (struct zdkm_combo){0});
+        send_save_result(-1, (struct zdkm_combo){0}, token);
     } else {
         send_line("ERR UNKNOWN");
     }
@@ -563,7 +618,7 @@ static void command_worker(void *arg1, void *arg2, void *arg3) {
     uart_irq_rx_enable(uart);
     for (;;) {
         struct command command;
-        k_timeout_t wait = auth_armed() ? K_MSEC(50) : K_FOREVER;
+        k_timeout_t wait = auth_needs_port_check() ? K_MSEC(50) : K_FOREVER;
         int err = k_msgq_get(&commands, &command, wait);
         if (!port_open()) {
             clear_auth();

@@ -57,7 +57,7 @@ const behaviorDescriptions = new Map([
   ["Reset", "キーボードを再起動"],
   ["Bootloader", "ファームウェアの書き込みモードに入る"],
   ["Studio Unlock", "ZMK Studio の設定ロックを解除"],
-  ["zdkm_unlock", "ZDKM での書き込みを1回許可"],
+  ["zdkm_unlock", "ZDKM の設定書き込みを許可"],
   ["Backlight", "キーのバックライトを操作"],
   ["Underglow", "本体下部の RGB ライトを操作"],
   ["External Power", "外部電源出力を操作"],

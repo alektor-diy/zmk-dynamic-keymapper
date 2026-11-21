@@ -8,7 +8,7 @@
   <title>ZMK Dynamic Keymapper</title>
   <link rel="stylesheet" href="./styles.css?v=editor-options">
   <script type="module">
-    import("./app.js?v=editor-options").catch(error => {
+    import("./app.js?v=unlock-status").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -36,6 +36,7 @@
   <main>
     <p id="notice" class="notice" aria-live="polite" hidden></p>
     <p id="demo-notice" class="notice" role="status" hidden>デモモードでサンプルのキーボードを編集中です。実機接続や解除キーは不要です。変更はデモ終了時にリセットされます。</p>
+    <p id="legacy-unlock-notice" class="notice" role="status" hidden>このファームウェアでは保存ごとに解除キーを押します。接続時に一度だけ解除するには、ZDKM を含むファームウェアを更新してください。</p>
     <noscript><p class="notice" data-kind="error">USB 接続を使うには、このページで JavaScript を許可してください。</p></noscript>
 
     <nav class="editor-nav" aria-label="設定画面">
@@ -191,6 +192,17 @@
     <footer>実機との接続には、デスクトップ版 Chrome または Edge の Web Serial を使います。</footer>
   </main>
 
+  <dialog id="unlock-dialog" aria-labelledby="unlock-heading">
+    <form method="dialog">
+      <h2 id="unlock-heading">キーボードのロックを解除</h2>
+      <p id="unlock-status" role="status"></p>
+      <p>解除すると、切断するまで続けて設定を編集できます。</p>
+      <div class="form-actions">
+        <button class="secondary" value="cancel" autofocus>キャンセルして切断</button>
+        <button id="unlock-retry" class="primary" type="button" hidden>再試行</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="delete-dialog" aria-labelledby="delete-heading">
     <form method="dialog">
       <h2 id="delete-heading">コンボを削除</h2>

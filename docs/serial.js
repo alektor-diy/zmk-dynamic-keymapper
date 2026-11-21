@@ -72,6 +72,7 @@ export class SerialDevice {
     this.decoder = new TextDecoder();
     this.buffer = "";
     this.closing = null;
+    this.sessionToken = undefined;
   }
 
   async withTimeout(operation) {
@@ -262,17 +263,48 @@ export class SerialDevice {
     return combos;
   }
 
+  async supportsSessionUnlock() {
+    if (this.sessionToken === undefined) {
+      try {
+        await this.request("SESSION", ["SESSION"]);
+        const nonce = crypto.getRandomValues(new Uint8Array(16));
+        this.sessionToken = Array.from(nonce, byte => byte.toString(16).padStart(2, "0")).join("");
+      } catch (error) {
+        if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
+        this.sessionToken = null;
+      }
+    }
+    return this.sessionToken !== null;
+  }
+
+  async unlockSession(onArmed) {
+    const token = this.sessionToken;
+    const { response } = await this.request(`ARMSESSION ${token}`, ["ARMED", "UNLOCKED"]);
+    if (response === "UNLOCKED") return;
+    onArmed();
+    await this.waitForUnlock(`SESSIONAUTH ${token}`);
+  }
+
   async save(command, notify) {
-    await this.request("ARM", ["ARMED"]);
-    notify("20秒以内にキーボードの ZDKM 解除キーを押してください。");
+    if (await this.supportsSessionUnlock()) {
+      await this.unlockSession(() => {
+        notify("この接続中の書き込みを許可するには、20秒以内にキーボードの ZDKM 解除キーを押してください。");
+      });
+      await this.request(`WRITE ${this.sessionToken} ${command}`, ["SAVED"]);
+    } else {
+      await this.request("ARM", ["ARMED"]);
+      notify("20秒以内にキーボードの ZDKM 解除キーを押してください。");
+      await this.waitForUnlock("AUTH");
+      await this.request(command, ["SAVED"]);
+    }
+    notify("保存しました。すべてのキーを離すと適用されます。");
+  }
+
+  async waitForUnlock(query) {
     const deadline = Date.now() + 20000;
     while (Date.now() < deadline) {
-      const { response } = await this.request("AUTH", ["LOCKED", "UNLOCKED"]);
-      if (response === "UNLOCKED") {
-        await this.request(command, ["SAVED"]);
-        notify("保存しました。すべてのキーを離すと適用されます。");
-        return;
-      }
+      const { response } = await this.request(query, ["LOCKED", "UNLOCKED"]);
+      if (response === "UNLOCKED") return;
       await delay(140);
     }
     throw new Error("書き込み許可がタイムアウトしました。もう一度操作してください。");
@@ -284,6 +316,7 @@ export class SerialDevice {
   }
 
   async closeStreams() {
+    await this.port.setSignals({ dataTerminalReady: false }).catch(() => {});
     await Promise.allSettled([this.reader.cancel(), this.writer.abort()]);
     this.reader.releaseLock();
     this.writer.releaseLock();
