@@ -181,17 +181,41 @@ export class SerialDevice {
 
   async keymapBehaviors(count) {
     const behaviors = new Map();
+    let supportsOperations = true;
     for (let index = 0; index < count; index++) {
       const { values: [id, first, second, supported, ...label] } =
         await this.request(`BEHAVIOR ${index}`, ["BEHAVIOR"], null);
       const code = integer(id, 0, 65535);
       if (code === 65535) continue;
-      behaviors.set(code, {
+      const behavior = {
         name: label.join(" "), parameters: [integer(first, 0, 3), integer(second, 0, 3)],
         editable: !!integer(supported, 0, 1),
-      });
+      };
+      if (supportsOperations && behavior.editable && behavior.parameters[0] === 1) {
+        try {
+          const operations = await this.behaviorOperations(index);
+          if (operations.length) behavior.operations = operations;
+        } catch (error) {
+          if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
+          supportsOperations = false;
+        }
+      }
+      behaviors.set(code, behavior);
     }
     return behaviors;
+  }
+
+  async behaviorOperations(index) {
+    const operations = [];
+    for (let entry = 0; entry <= 32; ++entry) {
+      const { values: [value, count, ...label] } =
+        await this.request(`BEHAVIOROPS ${index} ${entry}`, ["BEHAVIOROPS"], null);
+      if (value === "END" && count === undefined) return operations;
+      const code = integer(value, 0, 0xffffffff);
+      if (!label.length || operations.some(operation => operation.value === code) || entry === 32) break;
+      operations.push({ value: code, profileCount: integer(count, 0, 256), name: label.join(" ") });
+    }
+    throw new ConnectionError("無効な動作の選択肢を受信しました。");
   }
 
   async binding(layer, position) {

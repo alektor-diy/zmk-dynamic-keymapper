@@ -1,7 +1,7 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=gui-encoders";
-import { setupEditors } from "./editors.js?v=key-press-modifiers";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=behavior-operations";
+import { setupEditors } from "./editors.js?v=behavior-operations";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
-import { DemoDevice } from "./demo.js?v=sylvatwin";
+import { DemoDevice } from "./demo.js?v=behavior-operations";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";

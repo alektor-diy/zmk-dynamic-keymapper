@@ -1,5 +1,18 @@
 import { fillKeycap, fullSizeKeys, keycodes, keycodeText } from "./keycodes.js?v=keyboard-palette";
-import { ConnectionError } from "./serial.js?v=gui-renewal";
+import { ConnectionError } from "./serial.js?v=behavior-operations";
+
+const operationLabels = new Map([
+  ["Next Profile", "次のプロファイルへ"],
+  ["Previous Profile", "前のプロファイルへ"],
+  ["Select Profile", "プロファイルを選択"],
+  ["Disconnect Profile", "プロファイルを切断"],
+  ["Clear Selected Profile", "選択中のペアリングを解除"],
+  ["Clear All Profiles", "すべてのペアリングを解除"],
+  ["Toggle Outputs", "USB / BLE を切り替え"],
+  ["USB Output", "USB に切り替え"],
+  ["BLE Output", "BLE に切り替え"],
+]);
+const operationLabel = operation => operationLabels.get(operation.name) ?? operation.name;
 
 const MACRO_OPERATIONS = ["タップ", "押す", "離す", "待つ"];
 const PAGES = ["keymap", "combos", "macros"];
@@ -193,6 +206,11 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     if (id === features.macro) return { legend: `マクロ ${parameters[0]}` };
     const behavior = behaviors.get(id);
     if (!behavior) return { legend: `Behavior ${id}` };
+    const operation = behavior.operations?.find(entry => entry.value === parameters[0]);
+    if (operation) {
+      const name = operationLabel(operation);
+      return { legend: operation.profileCount ? `${name} ${parameters[1] + 1}` : name };
+    }
     const codes = [];
     const args = parameters.flatMap((value, i) => {
       const kind = behavior.parameters[i];
@@ -244,7 +262,9 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
         specialBehavior(key.dataset.special) !== undefined : canPick;
       key.disabled = !enabled || mapSyncRequired || !available;
     }
-    elements["map-save"].disabled = !enabled || mapSyncRequired || !mapDirty();
+    const operationIncomplete = [...elements["map-parameters"].querySelectorAll("[data-operation-field]")]
+      .some(field => field.value === "");
+    elements["map-save"].disabled = !enabled || mapSyncRequired || !mapDirty() || operationIncomplete;
     elements["map-cancel"].disabled = !enabled || mapSyncRequired || !mapDirty();
     for (const control of elements["map-assignment"].querySelectorAll("select, input")) {
       control.disabled = !enabled || mapSyncRequired;
@@ -642,6 +662,30 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     return group;
   }
 
+  function operationPicker(labelText, options, value, index) {
+    const group = document.createElement("div");
+    const field = document.createElement("select");
+    field.id = `map-param-${index}`;
+    field.dataset.parameter = index;
+    field.dataset.operationField = "";
+    field.required = true;
+    field.add(new Option("選択してください", ""));
+    for (const [code, text] of options) field.add(new Option(text, code));
+    field.value = options.some(([code]) => code === value) ? String(value) : "";
+    const label = document.createElement("label");
+    label.htmlFor = field.id;
+    label.textContent = labelText;
+    group.append(label, field);
+    return group;
+  }
+
+  function profilePicker(operation, value) {
+    if (!operation?.profileCount) return [];
+    const options = Array.from({ length: operation.profileCount }, (_, index) =>
+      [index, `プロファイル ${index + 1}`]);
+    return [operationPicker("プロファイル", options, value, 1)];
+  }
+
   function drawPaletteTargets(id) {
     const group = elements["map-palette-targets"];
     const indexes = selectedEncoder() ? [0, 1] :
@@ -660,14 +704,20 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   function setBindingDraft(id, values = [], preferred = null, modifierFlags = values[0] >>> 24) {
     const select = elements["map-behavior"];
     select.value = id ?? "";
+    const operations = behaviors.get(id)?.operations;
     const types = selectedEncoder() ? [2, 2] : behaviors.get(id)?.parameters ?? [];
     const hasModifiers = id === features.keyPress && types[0] === 2;
     const fields = types.flatMap((kind, index) => {
-      if (!kind) return [];
+      if (!kind || operations) return [];
       const value = values[index];
       const base = hasModifiers && index === 0 && value !== undefined ? value & 0xffffff : value;
       return [makeParameter(kind, base, index, id)];
     });
+    if (operations) {
+      const operation = operations.find(entry => entry.value === values[0]);
+      fields.push(operationPicker("操作", operations.map(entry => [entry.value, operationLabel(entry)]), values[0], 0),
+        ...profilePicker(operation, values[1]));
+    }
     if (hasModifiers) fields.push(makeKeyModifiers(modifierFlags));
     elements["map-parameters"].replaceChildren(...fields);
     const first = types.indexOf(2);
@@ -1118,6 +1168,15 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   elements["map-parameters"].addEventListener("input", event => {
     if (!event.target.matches("[data-parameter], [data-key-modifier]")) return;
     markPalette();
+    showMapDraft();
+  });
+  elements["map-parameters"].addEventListener("change", event => {
+    const field = event.target;
+    if (!field.matches('[data-operation-field][data-parameter="0"]')) return;
+    const operations = behaviors.get(Number(elements["map-behavior"].value)).operations;
+    const operation = field.value === "" ? undefined : operations.find(entry => entry.value === Number(field.value));
+    elements["map-parameters"].querySelector('[data-parameter="1"]')?.parentElement.remove();
+    elements["map-parameters"].append(...profilePicker(operation));
     showMapDraft();
   });
   elements["map-form"].addEventListener("submit", event => {

@@ -5,6 +5,7 @@ const binding = (id, first = 0, second = 0) => ({ id, parameters: [first, second
 const key = usage => binding(KEY_PRESS, keyboardUsage(usage));
 const letter = value => key(value.charCodeAt(0) - 61);
 const geometry = (x, y) => ({ x, y, width: 100, height: 100, rotation: 0, rx: 0, ry: 0 });
+const operation = (value, name, profileCount = 0) => ({ value, name, profileCount });
 
 // SylvaTwin's matrix positions follow the physical rows, left half then right half.
 export const demoKeys = [6, 6, 7, 7].flatMap((width, row) => [0, 1].flatMap(half =>
@@ -29,6 +30,14 @@ export class DemoDevice {
       [6, { name: "Transparent", parameters: [0, 0], editable: true }],
       [7, { name: "None", parameters: [0, 0], editable: true }],
       [8, { name: "Mouse Key Press", parameters: [1, 0], editable: true }],
+      [9, { name: "Bluetooth", parameters: [1, 1], editable: true, operations: [
+        operation(1, "Next Profile"), operation(2, "Previous Profile"),
+        operation(4, "Clear All Profiles"), operation(0, "Clear Selected Profile"),
+        operation(3, "Select Profile", 5), operation(5, "Disconnect Profile", 5),
+      ] }],
+      [10, { name: "Output Selection", parameters: [1, 0], editable: true, operations: [
+        operation(0, "Toggle Outputs"), operation(1, "USB Output"), operation(2, "BLE Output"),
+      ] }],
     ]);
     const base = [
       key(0x29), ...[..."QWERTYUIOP"].map(letter), key(0x2a),

@@ -1,6 +1,14 @@
 #ifndef ZDKM_DTSI
 #define ZDKM_DTSI
 
+/* Keep these behaviors available for runtime assignment with no stock bindings. */
+#if !defined(ZMK_BEHAVIORS_OMIT_BT) && !defined(ZMK_BEHAVIORS_KEEP_BT)
+#define ZMK_BEHAVIORS_KEEP_BT
+#endif
+#if !defined(ZMK_BEHAVIORS_OMIT_OUT) && !defined(ZMK_BEHAVIORS_KEEP_OUT)
+#define ZMK_BEHAVIORS_KEEP_OUT
+#endif
+
 #include <behaviors/zdkm.dtsi>
 
 / {
