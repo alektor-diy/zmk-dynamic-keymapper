@@ -1,16 +1,24 @@
 const KEY_PRESS = 1;
 const MACRO = 2;
 const keyboardUsage = usage => 0x070000 + usage;
-const letter = value => keyboardUsage(value.charCodeAt(0) - 61);
 const binding = (id, first = 0, second = 0) => ({ id, parameters: [first, second] });
+const key = usage => binding(KEY_PRESS, keyboardUsage(usage));
+const letter = value => key(value.charCodeAt(0) - 61);
+const geometry = (x, y) => ({ x, y, width: 100, height: 100, rotation: 0, rx: 0, ry: 0 });
+
+// SylvaTwin's matrix positions follow the physical rows, left half then right half.
+export const demoKeys = [6, 6, 7, 7].flatMap((width, row) => [0, 1].flatMap(half =>
+  Array.from({ length: width }, (_, column) =>
+    geometry(column * 100 + (half ? 1700 - width * 100 : 0), row * 100))));
+
 const stockCombos = [
   { slot: 0, output: 0x29, timeout: 50, idle: 0, layers: 0, slow: 0, positions: [13, 14] },
-  { slot: 1, output: 576, timeout: 65, idle: 0, layers: 1, slow: 0, positions: [24, 25, 26] },
+  { slot: 1, output: 576, timeout: 65, idle: 0, layers: 1, slow: 0, positions: [25, 26, 27] },
 ];
 
 export class DemoDevice {
-  constructor(layout) {
-    this.keys = layout.map((key, position) => ({ ...key, position }));
+  constructor() {
+    this.keys = demoKeys.map((key, position) => ({ ...key, position }));
     this.names = ["Base", "Symbols", "Navigation"];
     this.behaviors = new Map([
       [KEY_PRESS, { name: "Key Press", parameters: [2, 0], editable: true }],
@@ -20,21 +28,22 @@ export class DemoDevice {
       [5, { name: "Momentary Layer", parameters: [3, 0], editable: true }],
       [6, { name: "Transparent", parameters: [0, 0], editable: true }],
       [7, { name: "None", parameters: [0, 0], editable: true }],
+      [8, { name: "Mouse Key Press", parameters: [1, 0], editable: true }],
     ]);
-    const base = [..."QWERTYUIOPXXASDFGHJKLXXXZXCVBNMXXXXX"]
-      .map(value => binding(KEY_PRESS, letter(value)));
-    for (const [position, usage] of [[10, 0x2f], [11, 0x30], [21, 0x33], [22, 0x34], [23, 0x28],
-      [31, 0x36], [32, 0x37], [33, 0x38], [34, 0x52], [35, 0x2a]]) {
-      base[position] = binding(KEY_PRESS, keyboardUsage(usage));
-    }
-    base.push(binding(3, keyboardUsage(0xe0), keyboardUsage(0x2b)), binding(4, 1, keyboardUsage(0x2c)),
-      binding(MACRO, 0), binding(KEY_PRESS, keyboardUsage(0x28)),
-      binding(5, 2), binding(KEY_PRESS, keyboardUsage(0x2a)));
+    const base = [
+      key(0x29), ...[..."QWERTYUIOP"].map(letter), key(0x2a),
+      key(0x2b), ...[..."ASDFGHJKL"].map(letter), key(0x38), key(0x28),
+      key(0xe1), ...[..."ZXCVB"].map(letter), binding(8, 1), binding(8, 1), ...[..."NM"].map(letter),
+      key(0x36), key(0x37), key(0x52), key(0xe5),
+      key(0xe0), key(0xe3), key(0xe2), binding(7), key(0x4c), key(0x2c), binding(4, 1, keyboardUsage(0x40)),
+      binding(4, 2, keyboardUsage(0x43)), binding(7), key(0x2d), binding(7), key(0x50), key(0x51), key(0x4f),
+    ];
     const symbols = Array.from({ length: this.keys.length }, (_, pos) =>
       pos < 10 ? binding(KEY_PRESS, keyboardUsage(0x1e + pos)) : binding(6));
     const navigation = this.keys.map((_, pos) =>
       pos >= 18 && pos <= 21 ? binding(KEY_PRESS, keyboardUsage([0x50, 0x51, 0x52, 0x4f][pos - 18])) : binding(6));
     this.bindings = [base, symbols, navigation];
+    this.encoderBindings = this.names.map(() => ({ parameters: [0x0c00e9, 0x0c00ea] }));
     this.comboTable = new Map(stockCombos.map(combo => [combo.slot, combo]));
     this.macros = new Map([[0, [11, 8, 15, 15, 18].map(value => ({ op: 0, value }))]]);
   }
@@ -56,6 +65,8 @@ export class DemoDevice {
   }
 
   async layout() { return this.keys; }
+  async encoderLayout() { return [{ ...geometry(600, 50), encoder: 0 }]; }
+  async encoderBinding(layer, index) { return index === 0 ? this.encoderBindings[layer] : null; }
   async combos() { return [...this.comboTable.values()].sort((a, b) => a.slot - b.slot); }
   async keymapBehaviors() { return new Map(this.behaviors); }
   async keymapLayers() {
@@ -77,6 +88,15 @@ export class DemoDevice {
     case "BINDSET": {
       const [layer, position, id, ...parameters] = values;
       this.bindings[layer][position] = { id, parameters };
+      return;
+    }
+    case "ENCODERSET": {
+      const [layer, index, ...parameters] = values;
+      if (index !== 0 || !this.encoderBindings[layer] || parameters.length !== 2 ||
+          parameters.some(code => !Number.isInteger(code) || code <= 0 || code > 0xffffffff)) {
+        throw new Error("無効なエンコーダー設定です。");
+      }
+      this.encoderBindings[layer] = { parameters };
       return;
     }
     case "PUT": {

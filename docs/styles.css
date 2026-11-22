@@ -67,6 +67,13 @@ h2 { font-size: 1.12rem; line-height: 1.45; }
 .physical-key:enabled:hover { background: #444e71; }
 .physical-key[aria-pressed="true"] { background: #7353e8; border-color: #c7b9ff; box-shadow: inset 0 -2px 0 #5237b6; }
 .physical-key:disabled { opacity: .65; }
+.physical-key.physical-encoder {
+  border-radius: 50%; border-width: 2px; border-color: #c9cfe6; background: #485372;
+  box-shadow: inset 0 0 0 3px #323a53, inset 0 -5px 0 #262c43;
+}
+.physical-key.physical-encoder:enabled:hover { background: #58658b; }
+.physical-key.physical-encoder[aria-pressed="true"] { background: #7353e8; border-color: #d8d0ff; }
+.physical-encoder .keycap-code { max-width: 75%; }
 .keyboard[data-preview] .physical-key { opacity: .26; }
 .keyboard-placeholder {
   position: absolute; inset: 1rem; pointer-events: none; color: #fff; display: grid;
@@ -185,6 +192,7 @@ footer { margin-top: 1.4rem; font-size: .875rem; color: var(--muted); line-heigh
 .map-fields > div:first-child, .parameter-fields > div { min-width: min(100%, 10rem); }
 .map-fields > div:first-child { width: min(100%, 24rem); }
 .map-fields .key-parameter { width: min(100%, 12rem); }
+[data-encoder] .parameter-fields { flex: 1; }
 .key-parameter input { min-height: 35px; margin-bottom: .4rem; font-size: .8rem; }
 #map-keyboard .physical-key { overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding-inline: 2px; }
 #map-keyboard .keycap-legend { font-size: clamp(.55rem, 1.25vw, .8rem); }

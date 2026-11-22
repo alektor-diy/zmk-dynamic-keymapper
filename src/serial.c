@@ -9,6 +9,7 @@
 #include <zmk/keymap.h>
 #include <zmk/physical_layouts.h>
 
+#include "encoder.h"
 #include "keymap.h"
 #include "macro.h"
 #include "runtime.h"
@@ -333,6 +334,31 @@ static bool process_editor_command(const char *operation, char *cursor, const ch
                  (unsigned int)zdkm_behavior_count(), ZDKM_MACRO_SLOTS, ZDKM_MACRO_STEPS,
                  zmk_behavior_get_local_id(DEVICE_DT_NAME(DT_NODELABEL(kp))),
                  zmk_behavior_get_local_id(DEVICE_DT_NAME(DT_NODELABEL(zdkm_macro))));
+    } else if (strcmp(operation, "ENCODERS") == 0) {
+        if (take_word(&cursor)) goto invalid;
+        snprintk(response, sizeof(response), "OK ENCODERS %u", zdkm_encoder_count());
+    } else if (strcmp(operation, "ENCODER") == 0 || strcmp(operation, "ENCODERSET") == 0) {
+        uint16_t sensor;
+        struct zdkm_encoder_codes codes;
+        if (!zdkm_encoder_count() || !take_number(&cursor, zdkm_layer_count() - 1, &index) ||
+            !take_number(&cursor, zdkm_encoder_count() - 1, &sensor)) goto invalid;
+        if (strcmp(operation, "ENCODERSET") == 0) {
+            if (!take_uint(&cursor, UINT32_MAX, &codes.clockwise) ||
+                !take_uint(&cursor, UINT32_MAX, &codes.counterclockwise) || take_word(&cursor)) goto invalid;
+            if (!auth_state(true, token)) {
+                send_line("ERR LOCKED");
+                return true;
+            }
+            send_edit_result(zdkm_encoder_save(index, sensor, &codes));
+            return true;
+        }
+        if (take_word(&cursor)) goto invalid;
+        if (zdkm_encoder_get(index, sensor, &codes) < 0) {
+            send_line("OK ENCODER 0 0");
+            return true;
+        }
+        snprintk(response, sizeof(response), "OK ENCODER %u %u", (unsigned int)codes.clockwise,
+                 (unsigned int)codes.counterclockwise);
     } else if (strcmp(operation, "LAYEREDIT") == 0) {
         if (take_word(&cursor)) goto invalid;
         snprintk(response, sizeof(response), "OK LAYEREDIT %u", LAYER_NAME_BYTES);

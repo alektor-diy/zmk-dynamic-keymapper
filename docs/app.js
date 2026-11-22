@@ -1,7 +1,7 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=unlock-wait";
-import { setupEditors } from "./editors.js?v=session-unlock";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=encoders";
+import { setupEditors } from "./editors.js?v=encoders";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
-import { DemoDevice } from "./demo.js?v=demo";
+import { DemoDevice, demoKeys } from "./demo.js?v=sylvatwin";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
@@ -30,20 +30,6 @@ function setOutputOptions() {
   elements.usage.replaceChildren(new Option("出力する動作を選択", ""));
   for (const [usage, label] of usageLabels) elements.usage.add(new Option(label, usage));
   for (const [output, name] of caps?.actions ?? []) elements.usage.add(new Option(name, output));
-}
-
-const previewKeys = [];
-for (let row = 0; row < 3; row++) {
-  for (let column = 0; column < 12; column++) {
-    const offset = column < 6 ? 0 : 134;
-    previewKeys.push({
-      x: column * 100 + offset, y: row * 100 + (column % 6) * 4,
-      width: 100, height: 100, rotation: 0, rx: 0, ry: 0,
-    });
-  }
-}
-for (const [i, x] of [300, 400, 500, 734, 834, 934].entries()) {
-  previewKeys.push({ x, y: 320 + (i % 3) * 5, width: 100, height: 100, rotation: 0, rx: 0, ry: 0 });
 }
 
 let device = null;
@@ -179,6 +165,7 @@ function drawKeyboard(keyboard, keys, preview, select, label) {
   keyboard.replaceChildren(...keys.map(key => {
     const element = document.createElement(preview ? "div" : "button");
     element.className = "physical-key";
+    if (key.encoder !== undefined) element.classList.add("physical-encoder");
     const gapX = Math.min(key.width * .07, 5);
     const gapY = Math.min(key.height * .07, 5);
     element.style.left = `${100 * (key.x + gapX - area.x) / area.width}%`;
@@ -199,7 +186,8 @@ function drawKeyboard(keyboard, keys, preview, select, label) {
       } else {
         element.textContent = display;
       }
-      element.setAttribute("aria-label", `物理位置 ${key.position}${element.title ? " " + element.title : ""}`);
+      const name = key.encoder === undefined ? `物理位置 ${key.position}` : `ロータリーエンコーダー ${key.encoder + 1}`;
+      element.setAttribute("aria-label", `${name}${element.title ? " " + element.title : ""}`);
       element.addEventListener("click", () => select(key.position));
     }
     return element;
@@ -297,7 +285,7 @@ async function disconnect(message = "", kind = "info") {
   if (elements["delete-dialog"].open) elements["delete-dialog"].close("cancel");
   resetEditor();
   setOutputOptions();
-  renderKeyboard(previewKeys, true);
+  renderKeyboard(demoKeys, true);
   renderState();
   notice(message, kind);
   if (previous) await previous.close();
@@ -319,11 +307,12 @@ async function loadDevice(attached, version) {
   const keys = await attached.layout(current.count);
   const saved = await attached.combos(current, capabilities);
   const editorCaps = await attached.editorCapabilities();
+  const encoders = editorCaps ? await attached.encoderLayout() : [];
   if (version !== connectionVersion) return;
   info = current;
   caps = capabilities;
   combos = saved;
-  editors.setConnection(editorCaps, keys, capabilities.layerCount);
+  editors.setConnection(editorCaps, keys, capabilities.layerCount, encoders);
   setOutputOptions();
   resetEditor();
   renderKeyboard(keys);
@@ -339,7 +328,7 @@ async function startDemo() {
   if (device || busy) return;
   const version = ++connectionVersion;
   busy = true;
-  const sample = new DemoDevice(previewKeys);
+  const sample = new DemoDevice();
   device = sample;
   renderState();
   try {
@@ -570,5 +559,5 @@ if (supportsSerial) {
 }
 setOutputOptions();
 resetEditor();
-renderKeyboard(previewKeys, true);
+renderKeyboard(demoKeys, true);
 renderState();
