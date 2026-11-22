@@ -1,7 +1,7 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=encoders";
-import { setupEditors } from "./editors.js?v=encoders";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=gui-encoders";
+import { setupEditors } from "./editors.js?v=gui-encoders";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
-import { DemoDevice, demoKeys } from "./demo.js?v=sylvatwin";
+import { DemoDevice } from "./demo.js?v=sylvatwin";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
@@ -37,6 +37,8 @@ let info = null;
 let caps = null;
 let combos = [];
 let editingSlot = null;
+let creatingCombo = false;
+let comboSyncRequired = null;
 let busy = false;
 let choosingPort = false;
 let legacyUnlock = false;
@@ -46,6 +48,13 @@ function notice(message = "", kind = "info") {
   elements.notice.hidden = !message;
   elements.notice.textContent = message;
   elements.notice.dataset.kind = kind;
+}
+
+function comboResult(message = "", kind = "info") {
+  const result = elements["combo-result"];
+  result.hidden = !message;
+  result.textContent = message;
+  result.dataset.kind = kind;
 }
 
 function numbers(input) {
@@ -61,6 +70,20 @@ function validPosition(position) {
   return !!info && Number.isInteger(position) && position >= 0 && position < info.count;
 }
 
+function selectedCombo() {
+  return combos.find(combo => combo.slot === editingSlot);
+}
+
+function hasUnsavedCombo() {
+  return !comboSyncRequired && draft().dirty;
+}
+
+function warnBeforeUnload(event) {
+  if (!hasUnsavedCombo() && !editors.hasDraft()) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+
 function draft() {
   const selected = positions();
   const output = Number(elements.usage.value);
@@ -73,38 +96,64 @@ function draft() {
   const canonical = [...selected].sort((a, b) => a - b);
   const samePositions = combo => combo.positions.length === canonical.length &&
     combo.positions.every((key, i) => key === canonical[i]);
-  const original = combos.find(combo => combo.slot === editingSlot);
+  const original = selectedCombo();
   const unchangedChord = original && original.layers === layers && samePositions(original);
   const duplicate = !unchangedChord && combos.some(combo => combo.slot !== editingSlot && samePositions(combo) &&
     (!combo.layers || !layers || (combo.layers & layers)));
-  return {
-    canonical, output, timeout, idle, layers, slow, duplicate,
-    valid: selected.length >= 2 && selected.length <= (caps?.maxKeys ?? 2) &&
+  const valid = selected.length >= 2 && selected.length <= (caps?.maxKeys ?? 2) &&
       selected.every(validPosition) && new Set(selected).size === selected.length && output > 0 &&
       Number.isInteger(timeout) && timeout > 0 && timeout <= 65535 &&
-      Number.isInteger(idle) && idle >= 0 && idle <= 65535 && layersValid,
-  };
+      elements["combo-idle"].value !== "" && Number.isInteger(idle) && idle >= 0 && idle <= 65535 && layersValid;
+  const dirty = creatingCombo || !!original &&
+    (!valid || !unchangedChord || output !== original.output || timeout !== original.timeout ||
+      idle !== original.idle || slow !== original.slow);
+  return { canonical, output, timeout, idle, layers, slow, duplicate, valid, dirty };
 }
 
 function canEdit() {
-  return !!device && !busy && info?.status === "active";
+  return !!device && !busy && !comboSyncRequired && info?.status === "active";
 }
 
 function refreshEditor() {
   const editable = canEdit();
+  const open = creatingCombo || editingSlot !== null;
   const values = positions();
   const selected = new Set(values.filter(validPosition));
   const data = draft();
+  const extended = !!caps && !caps.legacy;
   elements["selection-count"].textContent = `${selected.size} / ${caps?.maxKeys ?? 2} 選択`;
-  elements["editor-heading"].textContent = editingSlot === null ? "コンボを作成" : "コンボを編集";
-  elements.clear.textContent = editingSlot === null ? "選択をクリア" : "編集をキャンセル";
-  elements.clear.disabled = !editable;
+  elements["editor-heading"].textContent = creatingCombo ? "新しいコンボ" :
+    editingSlot === null ? "コンボの詳細" : `コンボ ${editingSlot}`;
+  elements["editor-form"].hidden = !open;
+  elements["combo-empty-detail"].hidden = open;
+  elements["combo-empty-detail"].textContent = !device ? "USB で接続するか、デモを試してください。" :
+    info?.status === "invalid" ? "設定を初期化するとコンボを編集できます。" :
+      canEdit() ? "一覧からコンボを選ぶか、「追加」で作成してください。" :
+        "設定を読み込むとコンボの詳細を表示できます。";
+  const status = elements["combo-draft-state"];
+  status.hidden = !open;
+  status.dataset.dirty = String(data.dirty && !comboSyncRequired);
+  const statusText = comboSyncRequired ? "保存済み・確認待ち" : data.dirty ? "未保存の変更あり" :
+    info?.status === "pending" ? "保存済み・適用待ち" : "保存済み";
+  if (status.textContent !== statusText) status.textContent = statusText;
+  elements["combo-nav-dirty"].hidden = !data.dirty || comboSyncRequired;
+  if (data.dirty && !comboSyncRequired) elements["show-combos"].setAttribute("aria-label", "コンボ（未保存の変更あり）");
+  else elements["show-combos"].removeAttribute("aria-label");
+  elements.clear.textContent = creatingCombo ? "追加を取り消す" : "変更を取り消す";
+  elements.clear.disabled = !editable || !data.dirty;
+  elements["combo-delete"].hidden = editingSlot === null;
+  elements["combo-delete"].disabled = !editable;
+  elements["combo-new"].disabled = !editable || creatingCombo || combos.length >= info.slots;
   elements.usage.disabled = !editable;
-  elements.save.disabled = !editable || !data.valid || (editingSlot === null && combos.length >= info.slots);
+  elements.save.disabled = !editable || !data.dirty || !data.valid;
   elements.positions.disabled = !editable;
-  elements.options.hidden = !caps || caps.legacy;
+  elements["combo-scope"].hidden = !extended;
+  elements.layers.disabled = !editable || !extended;
+  elements["combo-layer-hint"].textContent = extended ?
+    `0〜${caps.layerCount - 1} をカンマ区切りで入力。空欄は全レイヤー。` : "";
+  elements.options.hidden = !extended;
   for (const control of elements.options.querySelectorAll("input")) {
-    control.disabled = !editable || caps.legacy;
+    control.disabled = !editable || !extended;
   }
   for (const button of elements.keyboard.querySelectorAll("button")) {
     button.disabled = !editable;
@@ -112,14 +161,21 @@ function refreshEditor() {
   }
 }
 
-function resetEditor() {
-  editingSlot = null;
-  elements.positions.value = "";
-  elements.usage.value = "";
-  elements["combo-timeout"].value = info?.timeout ?? 50;
-  elements["combo-idle"].value = 0;
-  elements.layers.value = "";
-  elements["slow-release"].checked = false;
+function showCombo(combo, create = false) {
+  if (!combo || editingSlot !== combo.slot) elements.options.open = false;
+  editingSlot = combo?.slot ?? null;
+  creatingCombo = create;
+  elements.positions.value = combo?.positions.join(", ") ?? "";
+  elements.usage.value = combo?.output ?? "";
+  elements["combo-timeout"].value = combo?.timeout ?? info?.timeout ?? 50;
+  elements["combo-idle"].value = combo?.idle ?? 0;
+  elements.layers.value = layerIds(combo?.layers).join(", ");
+  elements["slow-release"].checked = !!combo?.slow;
+}
+
+function layerIds(mask) {
+  return Array.from({ length: caps?.layerCount ?? 0 }, (_, layer) => layer)
+    .filter(layer => mask & (1 << layer));
 }
 
 function selectPosition(position) {
@@ -129,10 +185,11 @@ function selectPosition(position) {
   if (existing >= 0) selected.splice(existing, 1);
   else if (selected.length < caps.maxKeys) selected.push(position);
   else {
-    notice(`選択できるキーは最大 ${caps.maxKeys} 個です。選択済みのキーを外してください。`, "error");
+    comboResult(`選択できるキーは最大 ${caps.maxKeys} 個です。選択済みのキーを外してください。`, "error");
     return;
   }
   elements.positions.value = selected.join(", ");
+  comboResult();
   refreshEditor();
 }
 
@@ -194,32 +251,47 @@ function drawKeyboard(keyboard, keys, preview, select, label) {
   }));
 }
 
-function renderKeyboard(keys, preview = false) {
-  drawKeyboard(elements.keyboard, keys, preview, selectPosition, position => position);
-  elements["keyboard-placeholder"].hidden = !preview;
+function positionLabel(combo) {
+  return `位置 ${combo.positions.join(" + ")}`;
 }
 
-function action(label, style, callback) {
+function openCombo(combo, create = false) {
+  showCombo(combo, create);
+  comboResult();
+  renderState();
+  elements["editor-heading"].focus();
+}
+
+function renderComboRow(combo) {
+  const row = document.createElement("li");
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = label;
-  button.className = `${style} compact`;
-  button.disabled = !canEdit();
-  button.addEventListener("click", callback);
-  return button;
+  button.className = "saved-row";
+  button.disabled = busy || !!comboSyncRequired;
+  if (combo.slot === editingSlot) button.setAttribute("aria-current", "true");
+  const slot = document.createElement("span");
+  slot.textContent = `コンボ ${combo.slot}`;
+  const chord = document.createElement("strong");
+  chord.textContent = `${positionLabel(combo)} → ${usageLabel(combo.output)}`;
+  const scope = document.createElement("span");
+  scope.textContent = combo.layers ? `レイヤー ${layerIds(combo.layers).join(", ")}` : "全レイヤー";
+  button.append(slot, chord, scope);
+  button.addEventListener("click", () => {
+    if (combo.slot !== editingSlot) {
+      confirmDiscard("別のコンボを開くと、いまの編集内容は失われます。", () => openCombo(combo));
+    }
+  });
+  row.append(button);
+  return row;
 }
 
-function edit(combo) {
-  editingSlot = combo.slot;
-  elements.positions.value = combo.positions.join(", ");
-  elements.usage.value = combo.output;
-  elements["combo-timeout"].value = combo.timeout;
-  elements["combo-idle"].value = combo.idle;
-  elements.layers.value = Array.from({ length: caps.layerCount }, (_, layer) => layer)
-    .filter(layer => combo.layers & (1 << layer)).join(", ");
-  elements["slow-release"].checked = !!combo.slow;
-  renderState();
-  elements.positions.focus();
+function connectionTarget(attached) {
+  if (!attached) return "";
+  if (attached instanceof DemoDevice) return "サンプルキーボード";
+  const { usbVendorId, usbProductId } = attached.port.getInfo();
+  if (usbVendorId === undefined || usbProductId === undefined) return "ZDKM 専用ポート";
+  const ids = [usbVendorId, usbProductId].map(id => id.toString(16).padStart(4, "0"));
+  return `ZDKM 専用ポート · ${ids.join(":")}`;
 }
 
 function renderState() {
@@ -229,6 +301,9 @@ function renderState() {
   connection.textContent = demo ? "デモモード" : awaitingUnlock ? "ロック解除待ち" : device ? "USB 接続中" :
     choosingPort ? "ポート選択待ち" : busy ? "接続を処理中" : "未接続";
   connection.dataset.state = demo ? "demo" : awaitingUnlock ? "working" : device ? "online" : busy ? "working" : "offline";
+  const target = connectionTarget(device);
+  elements["connection-target"].textContent = target;
+  elements["connection-target"].hidden = !target;
   elements.connect.textContent = device && !demo ? "切断" : choosingPort ? "キャンセル" : "USB で接続";
   elements.connect.disabled = !supportsSerial || demo || (busy && !device && !choosingPort);
   elements.demo.textContent = demo ? "デモを終了" : "デモを試す";
@@ -240,52 +315,38 @@ function renderState() {
   }
   elements.refresh.disabled = !device || busy;
   elements.recovery.hidden = info?.status !== "invalid";
-  elements.reset.disabled = busy;
-  elements["slot-count"].textContent = info ? `${combos.length} / ${info.slots} 件` : "接続すると一覧を表示します。";
+  elements.reset.disabled = busy || !!comboSyncRequired;
+  elements["slot-count"].textContent = info ? `${combos.length} / ${info.slots} 件` : "";
   elements["list-empty"].hidden = !!combos.length || info?.status === "invalid";
-  elements["list-empty"].textContent = info ? "保存済みコンボはありません。" : "キーボードは未接続です。";
-  elements["combo-list"].replaceChildren(...combos.map(combo => {
-    const row = document.createElement("li");
-    row.className = "combo-row";
-    row.dataset.selected = String(combo.slot === editingSlot);
-    const description = document.createElement("div");
-    description.className = "combo-description";
-    const name = document.createElement("strong");
-    name.textContent = usageLabel(combo.output);
-    const keys = document.createElement("span");
-    keys.textContent = `位置 ${combo.positions.join(" + ")}`;
-    description.append(name, keys);
-    const actions = document.createElement("div");
-    actions.className = "row-actions";
-    actions.append(
-      action("編集", "secondary", () => edit(combo)),
-      action("削除", "danger", () => {
-        confirmChange("コンボを削除", `位置 ${combo.positions.join(" + ")} のコンボを削除します。`, `DEL ${combo.slot}`);
-      }),
-    );
-    row.append(description, actions);
-    return row;
-  }));
+  elements["list-empty"].textContent = info ? "保存済みコンボはありません。" :
+    device ? "コンボを読み込んでいます。" : "キーボードは未接続です。";
+  elements["combo-list"].replaceChildren(...combos.map(renderComboRow));
   refreshEditor();
   editors.refresh();
 }
 
 async function disconnect(message = "", kind = "info") {
+  if (kind === "error" && (hasUnsavedCombo() || editors.hasDraft())) {
+    message += " 編集中の内容は画面から失われました。";
+  }
   const previous = device;
   const version = ++connectionVersion;
   device = null;
   info = null;
   caps = null;
   combos = [];
+  comboSyncRequired = null;
   choosingPort = false;
   legacyUnlock = false;
   busy = !!previous;
   if (elements["unlock-dialog"].open) elements["unlock-dialog"].close("disconnect");
   editors.setConnection(null, [], 0);
   if (elements["delete-dialog"].open) elements["delete-dialog"].close("cancel");
-  resetEditor();
+  if (elements["discard-dialog"].open) elements["discard-dialog"].close("cancel");
+  showCombo();
+  comboResult();
   setOutputOptions();
-  renderKeyboard(demoKeys, true);
+  elements.keyboard.replaceChildren();
   renderState();
   notice(message, kind);
   if (previous) await previous.close();
@@ -314,8 +375,8 @@ async function loadDevice(attached, version) {
   combos = saved;
   editors.setConnection(editorCaps, keys, capabilities.layerCount, encoders);
   setOutputOptions();
-  resetEditor();
-  renderKeyboard(keys);
+  showCombo(combos[0]);
+  drawKeyboard(elements.keyboard, keys, false, selectPosition, position => position);
   notice();
   showInfoStatus();
 }
@@ -440,7 +501,7 @@ async function connect() {
   }
 }
 
-async function run(operation) {
+async function run(operation, reportError) {
   const attached = device;
   if (!attached || busy) return;
   busy = true;
@@ -450,8 +511,9 @@ async function run(operation) {
     await operation(attached);
   } catch (error) {
     if (device !== attached) return;
-    if (error instanceof ConnectionError) await disconnect(error.message, "error");
-    else notice(error.message, "error");
+    const message = reportError?.(error) ?? error.message;
+    if (error instanceof ConnectionError) await disconnect(message, "error");
+    else if (!reportError) notice(message, "error");
   } finally {
     if (device === attached) {
       busy = false;
@@ -462,21 +524,42 @@ async function run(operation) {
 
 async function reload() {
   await run(async attached => {
+    comboResult("保存済みコンボを読み込んでいます。");
     const current = await attached.info();
     const saved = await attached.combos(current, caps);
     if (device !== attached) return;
-    info = current;
-    combos = saved;
-    if (editingSlot !== null && !combos.some(combo => combo.slot === editingSlot)) resetEditor();
+    updateSavedCombos(current, saved, comboSyncRequired ? comboSyncRequired.slot : editingSlot);
+    comboResult("保存済みコンボを再読み込みしました。", "success");
     showInfoStatus();
-  });
+  }, error => reportComboError("再読み込み", error));
 }
 
-async function change(command) {
+function updateSavedCombos(current, saved, slot) {
+  info = current;
+  combos = saved;
+  comboSyncRequired = null;
+  showCombo(saved.find(combo => combo.slot === slot) ?? saved[0]);
+}
+
+function reportComboError(operation, error) {
+  const message = comboSyncRequired ?
+    `保存は完了しましたが、一覧を確認できませんでした。 ${error.message}` :
+    error instanceof ConnectionError ? `${operation}の結果を確認できませんでした。再接続して保存済み一覧を確認してください。 ${error.message}` :
+      `${operation}に失敗しました。 ${error.message}`;
+  comboResult(message, "error");
+  return message;
+}
+
+async function change(command, operation, slot = null) {
   await run(async attached => {
-    await attached.save(command, message => {
-      if (device === attached) notice(message);
+    comboResult(`${operation}しています。`);
+    await attached.save(command, (message, phase) => {
+      if (device === attached && phase !== "saved") comboResult(message);
     });
+    if (device !== attached) return;
+    comboSyncRequired = { slot };
+    refreshEditor();
+    comboResult("保存を確認しました。適用状態と一覧を確認しています。");
     const deadline = Date.now() + 5000;
     let current = await attached.info();
     while (current.status === "pending" && Date.now() < deadline) {
@@ -485,50 +568,80 @@ async function change(command) {
     }
     const saved = await attached.combos(current, caps);
     if (device !== attached) return;
-    info = current;
-    combos = saved;
-    resetEditor();
-    if (info.status === "active") {
-      notice(attached instanceof DemoDevice ? "デモに変更を保存しました。" : "変更をキーボードに保存して適用しました。");
+    updateSavedCombos(current, saved, slot);
+    if (current.status === "active") {
+      const target = slot === null ? "" : `コンボ ${slot} を`;
+      comboResult(`${target}${operation}しました。`, "success");
+    } else if (current.status === "pending") {
+      comboResult("保存済みの設定が適用待ちです。すべてのキーを離し、再読み込みしてください。");
+    } else {
+      comboResult("書き込みは完了しました。再読み込みして適用状態を確認してください。");
+      showInfoStatus();
     }
-    showInfoStatus();
-  });
+    elements["editor-heading"].focus();
+  }, error => reportComboError(operation, error));
 }
 
-function confirmChange(title, message, command) {
-  const dialog = elements["delete-dialog"];
-  elements["delete-heading"].textContent = title;
-  elements["delete-description"].textContent = message;
-  dialog.querySelector('[value="confirm"]').textContent = command === "RESET" ? "初期化する" : "削除する";
+function confirmDiscard(message, proceed, includeOtherEditors = false) {
+  if (!hasUnsavedCombo() && !(includeOtherEditors && editors.hasDraft())) {
+    proceed();
+    return;
+  }
+  const dialog = elements["discard-dialog"];
+  elements["discard-description"].textContent = message;
   dialog.returnValue = "cancel";
-  const attached = device;
   dialog.addEventListener("close", () => {
-    if (dialog.returnValue === "confirm" && device === attached) void change(command);
+    if (dialog.returnValue === "confirm") proceed();
   }, { once: true });
   dialog.showModal();
 }
 
-elements.connect.addEventListener("click", () => { void (device || choosingPort ? disconnect() : connect()); });
+function confirmChange(title, message, command, operation, slot = null) {
+  const dialog = elements["delete-dialog"];
+  elements["delete-heading"].textContent = title;
+  elements["delete-description"].textContent = hasUnsavedCombo() ? `${message} 未保存の変更も失われます。` : message;
+  dialog.querySelector('[value="confirm"]').textContent = command === "RESET" ? "初期化する" : "削除する";
+  dialog.returnValue = "cancel";
+  const attached = device;
+  dialog.addEventListener("close", () => {
+    if (dialog.returnValue === "confirm" && device === attached) void change(command, operation, slot);
+  }, { once: true });
+  dialog.showModal();
+}
+
+elements.connect.addEventListener("click", () => {
+  if (device || choosingPort) {
+    confirmDiscard("切断すると、いまの編集内容は失われます。", () => { void disconnect(); }, true);
+  } else {
+    void connect();
+  }
+});
 elements["unlock-dialog"].addEventListener("close", event => {
   if (event.currentTarget.returnValue === "cancel") void disconnect("ロック解除をキャンセルしたため、切断しました。");
 });
-elements.demo.addEventListener("click", () => { void startDemo(); });
-elements.refresh.addEventListener("click", () => { void reload(); });
-elements.clear.addEventListener("click", () => {
-  resetEditor();
-  renderState();
-  elements.positions.focus();
+elements.demo.addEventListener("click", () => {
+  confirmDiscard("デモを終了すると、いまの編集内容は失われます。", () => { void startDemo(); }, true);
 });
-for (const input of [elements.positions, elements.usage, ...elements.options.querySelectorAll("input")]) {
-  input.addEventListener("input", refreshEditor);
-}
+elements.refresh.addEventListener("click", () => {
+  confirmDiscard("再読み込みすると、いまの編集内容は失われます。", () => { void reload(); });
+});
+elements["combo-new"].addEventListener("click", () => {
+  confirmDiscard("新しいコンボを開くと、いまの編集内容は失われます。", () => openCombo(null, true));
+});
+elements.clear.addEventListener("click", () => {
+  openCombo(selectedCombo() ?? combos[0]);
+});
+elements["editor-form"].addEventListener("input", () => {
+  comboResult();
+  refreshEditor();
+});
 elements["editor-form"].addEventListener("submit", event => {
   event.preventDefault();
   if (!canEdit()) return;
   const data = draft();
-  if (!data.valid) return;
+  if (!data.valid || !data.dirty) return;
   if (data.duplicate) {
-    notice("同じ位置の組み合わせが対象レイヤーにあります。一覧から編集してください。", "error");
+    comboResult("同じ位置の組み合わせが対象レイヤーにあります。一覧から編集してください。", "error");
     return;
   }
   const slot = editingSlot ?? Array.from({ length: info.slots }, (_, index) => index)
@@ -537,27 +650,35 @@ elements["editor-form"].addEventListener("submit", event => {
   const keys = data.canonical.join(" ");
   const command = caps.legacy ? `SET ${slot} ${keys} ${data.output}` :
     `PUT ${slot} ${data.output} ${data.timeout} ${data.idle} ${data.layers} ${data.slow} ${keys}`;
-  void change(command);
+  void change(command, "保存", slot);
+});
+elements["combo-delete"].addEventListener("click", () => {
+  const combo = selectedCombo();
+  if (!canEdit() || !combo) return;
+  confirmChange("コンボを削除", `コンボ ${combo.slot}（${positionLabel(combo)} → ${usageLabel(combo.output)}）を削除します。`,
+    `DEL ${combo.slot}`, "削除", combo.slot);
 });
 elements.reset.addEventListener("click", () => {
   const message = device instanceof DemoDevice ? "デモのコンボを初期状態に戻します。" :
     "GUI で保存したコンボ設定を取り消し、ファームウェアの初期設定に戻します。";
-  confirmChange("コンボ設定を初期化", message, "RESET");
+  confirmChange("コンボ設定を初期化", message, "RESET", "初期化");
 });
 const editors = setupEditors({
   elements, drawKeyboard, usageLabels, run, notice,
   state: () => ({ device, busy, info }),
 });
+window.addEventListener("beforeunload", warnBeforeUnload);
 if (supportsSerial) {
   navigator.serial.addEventListener("disconnect", event => {
     if (device && (event.port ?? event.target) === device.port) {
-      void disconnect("キーボードの USB 接続が切れました。", "error");
+      const message = comboSyncRequired ? "保存は完了しました。USB 接続が切れたため、再接続して一覧を確認してください。" :
+        "キーボードの USB 接続が切れました。再接続して保存済み一覧を確認してください。";
+      void disconnect(message, "error");
     }
   });
 } else {
   notice(unavailableSerial, "info");
 }
 setOutputOptions();
-resetEditor();
-renderKeyboard(demoKeys, true);
+showCombo();
 renderState();

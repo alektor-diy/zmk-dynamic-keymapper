@@ -322,7 +322,7 @@ export class SerialDevice {
       await this.waitForUnlock("AUTH");
       await this.request(command, ["SAVED"]);
     }
-    notify("保存しました。すべてのキーを離すと適用されます。");
+    notify("保存しました。すべてのキーを離すと適用されます。", "saved");
   }
 
   async waitForUnlock(query, timeout = LEGACY_UNLOCK_TIMEOUT) {
