@@ -19,7 +19,7 @@ v0.4での動作は未確認です。
       revision: main
 ```
 
-2． 普段使う `.keymap` の冒頭に `#include <zdkm.dtsi>` を追加します。
+2. 普段使う `.keymap` の冒頭に `#include <zdkm.dtsi>` を追加します。
 ```<任意の文字列>.keymap
 #include <zdkm.dtsi>
 ```
@@ -36,9 +36,3 @@ v0.4での動作は未確認です。
 
 Chrome または Edge で [ZMK Dynamic Keymapper](https://alektor-diy.github.io/zmk-dynamic-keymapper/) を開き、`USB で接続` から ZDKM 専用の USB ポートを選びます。  
 解除ダイアログが表示されたら、キーボード上の `&zdkm_unlock` キーを押してロックを解除してください。
-
-### ロータリーエンコーダー
-
-`.keymap` の `sensor-bindings` に `&inc_dec_kp` を使うレイヤーでは、キーマップ画面で時計回りと反時計回りに別々のキーコードを割り当てられます。設定はレイヤーごとに本体に保存されます。実機で使うには、この機能を含む ZDKM ファームウェアが必要です。
-
-「デモを試す」から、左側にエンコーダーを搭載した52キーの SylvaTwin で操作を試せます。
