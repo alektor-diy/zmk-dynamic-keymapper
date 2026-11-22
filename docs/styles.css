@@ -83,6 +83,8 @@ h2 { font-size: 1.12rem; line-height: 1.45; }
 .physical-key[aria-pressed="true"] { background: var(--accent); border-color: #987a00; box-shadow: inset 0 -2px 0 #c6a100; }
 .physical-key[aria-pressed="true"]:enabled:hover { background: var(--accent-hover); }
 .physical-key:disabled:not([aria-pressed="true"]) { opacity: .65; }
+.physical-key.physical-encoder { border-radius: 50%; border-width: 2px; }
+.physical-encoder .keycap-code { max-width: 75%; }
 .combo-keys .keyboard-surface { margin: .65rem 0 .8rem; padding: .75rem; }
 .combo-keys .keyboard { max-width: 620px; }
 .map-keyboard-surface .keyboard { max-width: 545px; }
@@ -220,6 +222,7 @@ footer { margin-top: 1.4rem; font-size: .875rem; color: var(--muted); line-heigh
 .map-fields > div:first-child, .parameter-fields > div { min-width: min(100%, 10rem); }
 .map-fields > div:first-child { width: min(100%, 24rem); }
 .map-fields .key-parameter { width: min(100%, 12rem); }
+[data-encoder] .parameter-fields { flex: 1; }
 .key-parameter { position: relative; }
 .key-suggestions {
   position: absolute; z-index: 3; top: calc(100% + .25rem); inset-inline: 0; min-width: min(100%, 11rem);

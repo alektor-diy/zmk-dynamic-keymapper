@@ -199,6 +199,24 @@ export class SerialDevice {
     return { id: integer(id, 0, 65535), parameters: parameters.map(value => integer(value, 0, 0xffffffff)) };
   }
 
+  async encoderLayout() {
+    try {
+      const { values: [value] } = await this.request("ENCODERS", ["ENCODERS"], 1);
+      return Array.from({ length: integer(value, 0, 255) }, (_, encoder) => ({ encoder }));
+    } catch (error) {
+      if (error instanceof ProtocolError && error.code === "UNKNOWN") return [];
+      throw error;
+    }
+  }
+
+  async encoderBinding(layer, index) {
+    const { values } = await this.request(`ENCODER ${layer} ${index}`, ["ENCODER"], 2);
+    const codes = values.map(value => integer(value, 0, 0xffffffff));
+    if (!codes[0] && !codes[1]) return null;
+    if (codes.includes(0)) throw new ConnectionError("無効なエンコーダー設定を受信しました。");
+    return { parameters: codes };
+  }
+
   async macro(slot, limit) {
     const { values: [count, ...items] } = await this.request(`MACRO ${slot}`, ["MACRO"], null);
     if (count === "INVALID" && items.length === 0) return null;

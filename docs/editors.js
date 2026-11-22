@@ -98,12 +98,14 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
   let features = null;
   let keys = [];
+  let encoders = [];
   let keyOrder = [];
   let layerCount = 0;
   let layers = null;
   let behaviors = new Map();
   let layer = null;
   let bindings = [];
+  let encoderBindings = [];
   let position = null;
   let activeKeyParameter = null;
   let savedMapDraft = "";
@@ -181,6 +183,9 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     return legend === code ? legend : `${legend} · ${code}`;
   }
 
+  const encoderPosition = index => `encoder-${index}`;
+  const selectedEncoder = () => encoders.find(item => item.position === position);
+
   function bindingText(binding) {
     if (!binding || binding.id === 65535) return { legend: "—" };
     const { id, parameters } = binding;
@@ -225,15 +230,18 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       control.disabled = !enabled;
     }
     updateLayerName();
-    for (const group of ["map-layers", "map-keyboard", "map-form"]) {
+    for (const group of ["map-layers", "map-keyboard", "map-encoders", "map-form"]) {
       for (const control of elements[group].querySelectorAll("button, select, input")) {
         control.disabled = !enabled || control.hasAttribute("data-unavailable");
       }
     }
+    const encoder = selectedEncoder();
     const detail = elements["map-assignment"].open;
-    const canPick = position !== null && (detail && activeKeyParameter !== null || behaviors.get(features?.keyPress)?.editable);
+    const canPick = position !== null && ((encoder || detail) && activeKeyParameter !== null ||
+      behaviors.get(features?.keyPress)?.editable);
     for (const key of elements["map-form"].querySelectorAll(".palette-key")) {
-      const available = key.dataset.special ? position !== null && specialBehavior(key.dataset.special) !== undefined : canPick;
+      const available = key.dataset.special ? !encoder && position !== null &&
+        specialBehavior(key.dataset.special) !== undefined : canPick;
       key.disabled = !enabled || mapSyncRequired || !available;
     }
     elements["map-save"].disabled = !enabled || mapSyncRequired || !mapDirty();
@@ -241,6 +249,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     for (const control of elements["map-assignment"].querySelectorAll("select, input")) {
       control.disabled = !enabled || mapSyncRequired;
     }
+    if (encoder) elements["map-behavior"].disabled = true;
     for (const row of elements["macro-list"].querySelectorAll("button")) row.disabled = !enabled || macroSyncRequired;
     elements["macro-refresh"].disabled = !enabled;
     elements["macro-new"].disabled = !enabled || macroSyncRequired || !macroRecords || macroRecords.size >= features.macroSlots ||
@@ -263,9 +272,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     }
   }
 
-  function setConnection(capabilities, layout, count) {
+  function setConnection(capabilities, layout, count, encoderLayout = []) {
     features = capabilities;
     keys = layout;
+    encoders = encoderLayout.map(item => ({ ...item, position: encoderPosition(item.encoder) }));
     keyOrder = keySequence(layout);
     layerCount = count;
     layers = null;
@@ -276,6 +286,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     savedMapDraft = "";
     mapSyncRequired = false;
     bindings = [];
+    encoderBindings = [];
     slot = null;
     macroRecords = null;
     steps = null;
@@ -288,7 +299,8 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     closeLayerRename();
     drawPaletteTargets();
     markPalette();
-    for (const id of ["map-layers", "map-keyboard", "macro-steps"]) elements[id].replaceChildren();
+    for (const id of ["map-layers", "map-keyboard", "map-encoders", "macro-steps"]) elements[id].replaceChildren();
+    elements["map-encoders"].hidden = true;
     elements["macro-list"].replaceChildren();
     elements["macro-form"].hidden = true;
     elements["macro-list-empty"].hidden = false;
@@ -300,13 +312,33 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function drawPhysicalKeys() {
-    drawKeyboard(elements["map-keyboard"], keys, false, key => {
-      if (key !== position && discardMapDraft()) {
-        if (!mapSyncRequired) result("map");
-        selectKey(key);
-      }
-    }, key => bindingText(bindings[key]));
+    const choose = key => {
+      if (key === position || !discardMapDraft()) return;
+      if (!mapSyncRequired) result("map");
+      selectKey(key);
+    };
+    const placed = encoders.filter(item => item.x !== undefined);
+    drawKeyboard(elements["map-keyboard"], [...keys, ...placed], false, choose, key => {
+      if (typeof key === "number") return bindingText(bindings[key]);
+      const encoder = placed.find(item => item.position === key);
+      return { legend: "↻ ↺", code: encoderText(encoder.encoder) };
+    });
+    const controls = encoders.filter(item => item.x === undefined && encoderBindings[item.encoder]);
+    elements["map-encoders"].hidden = !controls.length;
+    elements["map-encoders"].replaceChildren(...controls.map(({ encoder, position: key }) => {
+      const item = button(`ロータリーエンコーダー ${encoder + 1}`, () => choose(key));
+      item.dataset.position = key;
+      item.title = encoderText(encoder);
+      return item;
+    }));
     markKey();
+  }
+
+  function encoderText(index) {
+    const current = encoderBindings[index];
+    if (!current) return "—";
+    const [clockwise, counterclockwise] = current.parameters.map(keyOption);
+    return `↻ ${clockwise} / ↺ ${counterclockwise}`;
   }
 
   function drawLayers() {
@@ -336,10 +368,17 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       if (attached !== state().device) return;
       current[key.position] = key.position <= 255 ? await attached.binding(selected, key.position) : null;
     }
+    const rotations = [];
+    for (const { encoder } of encoders) {
+      if (attached !== state().device) return;
+      rotations[encoder] = await attached.encoderBinding(selected, encoder);
+    }
     if (attached !== state().device) return;
     layers = available;
     behaviors = catalog;
-    if (layer !== selected) {
+    const encoder = selectedEncoder();
+    if (layer !== selected || (encoder && !rotations[encoder.encoder])) {
+      if (encoder) elements["map-assignment"].open = false;
       position = null;
       activeKeyParameter = null;
       closeLayerRename();
@@ -348,6 +387,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     }
     layer = selected;
     bindings = current;
+    encoderBindings = rotations;
     mapSyncRequired = false;
     drawKeymap();
     if (position !== null && canAssign(position)) selectKey(position);
@@ -369,6 +409,8 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function canAssign(key) {
+    const encoder = encoders.find(item => item.position === key);
+    if (encoder) return !!encoderBindings[encoder.encoder];
     const binding = bindings[key];
     return !!binding && behaviors.get(binding.id)?.name.toLowerCase().replace(/[ _-]/g, "") !== "zdkmunlock";
   }
@@ -379,8 +421,9 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function markKey() {
-    for (const item of elements["map-keyboard"].querySelectorAll("button")) {
-      const key = Number(item.dataset.position);
+    for (const item of document.querySelectorAll("#map-keyboard button, #map-encoders button")) {
+      const value = item.dataset.position;
+      const key = /^\d+$/.test(value) ? Number(value) : value;
       item.setAttribute("aria-pressed", String(key === position));
       item.toggleAttribute("data-unavailable", !canAssign(key));
     }
@@ -402,6 +445,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function paramLabel(kind, index, id) {
+    if (selectedEncoder()) return index === 0 ? "時計回り" : "反時計回り";
     const behavior = behaviors.get(id)?.name;
     if (id === features.macro) return "マクロ枠";
     if (behavior === "Mod-Tap") return index === 0 ? "長押しのキー" : "タップのキー";
@@ -573,7 +617,8 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
 
   function drawPaletteTargets(id) {
     const group = elements["map-palette-targets"];
-    const indexes = behaviors.get(id)?.parameters.flatMap((kind, index) => kind === 2 ? [index] : []) ?? [];
+    const indexes = selectedEncoder() ? [0, 1] :
+      behaviors.get(id)?.parameters.flatMap((kind, index) => kind === 2 ? [index] : []) ?? [];
     group.hidden = position === null || !elements["map-assignment"].open || id === features?.keyPress || !indexes.length;
     const label = document.createElement("span");
     label.textContent = "パレットの入力先";
@@ -588,7 +633,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   function setBindingDraft(id, values = [], preferred = null) {
     const select = elements["map-behavior"];
     select.value = id ?? "";
-    const types = behaviors.get(id)?.parameters ?? [];
+    const types = selectedEncoder() ? [2, 2] : behaviors.get(id)?.parameters ?? [];
     elements["map-parameters"].replaceChildren(...types.flatMap((kind, index) =>
       kind ? [makeParameter(kind, values[index], index, id)] : []));
     const first = types.indexOf(2);
@@ -634,20 +679,35 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
 
   function updateMapSelection() {
     const selected = position !== null;
+    const encoder = selectedEncoder();
     elements["map-assignment"].hidden = !selected;
+    elements["map-assignment"].toggleAttribute("data-encoder", !!encoder);
+    elements["map-assignment-title"].textContent = encoder ? "回転方向の割り当て" : "動作の詳細設定";
+    elements["map-behavior-field"].hidden = !!encoder;
+    elements["map-auto-label"].hidden = !!encoder;
     const current = bindingText(bindings[position]);
     const description = [...new Set([current.legend, current.code].filter(Boolean))].join(" · ");
-    elements["map-current"].textContent = selected ?
+    elements["map-current"].textContent = encoder ? `ロータリーエンコーダー ${encoder.encoder + 1} · 現在 ${encoderText(encoder.encoder)}` : selected ?
       `位置 ${position} · 現在 ${description}` :
       "上のキーボードから変更するキーを選んでください。";
   }
 
   function selectKey(key) {
     if (!canAssign(key)) return;
+    const previousEncoder = selectedEncoder();
     position = key;
     markKey();
-    const current = bindings[key];
     updateMapSelection();
+    const encoder = selectedEncoder();
+    if (encoder) {
+      elements["map-assignment"].open = true;
+      setBindingDraft(undefined, encoderBindings[encoder.encoder].parameters);
+      savedMapDraft = mapDraft();
+      refresh();
+      return;
+    }
+    if (previousEncoder) elements["map-assignment"].open = false;
+    const current = bindings[key];
     const select = elements["map-behavior"];
     const catalog = [...behaviors].filter(([, behavior]) => behavior.editable && !hiddenBehaviors.has(behavior.name))
       .sort(([, a], [, b]) => a.name.localeCompare(b.name));
@@ -663,14 +723,18 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     if (!editable() || mapSyncRequired || position === null) return;
     const target = position;
     const targetLayer = layer;
-    const current = bindings[target];
-    const matches = existing => existing?.id === id && params.every((value, index) => existing.parameters[index] === value);
+    const encoder = selectedEncoder();
+    const name = encoder ? `ロータリーエンコーダー ${encoder.encoder + 1}` : `位置 ${target}`;
+    const current = encoder ? encoderBindings[encoder.encoder] : bindings[target];
+    const matches = existing => existing && (encoder || existing.id === id) &&
+      params.every((value, index) => existing.parameters[index] === value);
     const complete = (saved, unchanged = false) => {
-      bindings[target] = saved;
+      if (encoder) encoderBindings[encoder.encoder] = saved;
+      else bindings[target] = saved;
       const next = advance ? keyOrder.slice(keyOrder.indexOf(target) + 1).find(canAssign) : undefined;
       if (!unchanged) drawPhysicalKeys();
       selectKey(next ?? target);
-      const message = unchanged ? `位置 ${target} は同じ割り当てです。` : `位置 ${target} の割り当てを保存しました。`;
+      const message = unchanged ? `${name} は同じ割り当てです。` : `${name} の割り当てを保存しました。`;
       const progression = !advance ? "" : next === undefined ? " このレイヤーの最後のキーです。" : ` 次は位置 ${next} です。`;
       result("map", message + progression, unchanged ? "info" : "success");
     };
@@ -679,13 +743,14 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       return;
     }
     await run(async attached => {
-      result("map", `位置 ${target} の割り当てを保存しています。`);
-      await attached.save(`BINDSET ${targetLayer} ${target} ${id} ${params.join(" ")}`, (message, phase) => {
+      result("map", `${name} の割り当てを保存しています。`);
+      const command = encoder ? `ENCODERSET ${targetLayer} ${encoder.encoder}` : `BINDSET ${targetLayer} ${target} ${id}`;
+      await attached.save(`${command} ${params.join(" ")}`, (message, phase) => {
         if (attached === state().device && phase !== "saved") result("map", message);
       });
       if (attached !== state().device) return;
       mapSyncRequired = true;
-      const saved = await attached.binding(targetLayer, target);
+      const saved = encoder ? await attached.encoderBinding(targetLayer, encoder.encoder) : await attached.binding(targetLayer, target);
       if (attached !== state().device) return;
       if (!matches(saved)) throw new Error("キーボードの割り当てが保存内容と一致しません。");
       mapSyncRequired = false;
@@ -759,6 +824,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
 
   function paletteKey(code) {
     const entry = button("", () => {
+      if (selectedEncoder()) elements["map-assignment"].open = true;
       if (!elements["map-assignment"].open || activeKeyParameter === null) {
         assignFromPalette(features.keyPress, [code, 0], entry);
       } else {
