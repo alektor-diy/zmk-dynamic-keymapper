@@ -133,7 +133,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
 
   function mapDraft() {
     const fields = elements["map-parameters"].querySelectorAll("[data-parameter]");
-    return JSON.stringify([elements["map-behavior"].value, ...Array.from(fields, field =>
+    return JSON.stringify([elements["map-behavior"].value, keyModifierFlags(), ...Array.from(fields, field =>
       field.hasAttribute("data-key-parameter") ? [field.value, field.dataset.keyValue] : field.value)]);
   }
 
@@ -461,6 +461,33 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     return field.hasAttribute("data-key-parameter") ? field.dataset.keyValue ?? "" : field.value;
   }
 
+  function keyModifierFlags() {
+    const checked = elements["map-parameters"].querySelectorAll("[data-key-modifier]:checked");
+    return Array.from(checked).reduce((flags, input) => flags | Number(input.value), 0);
+  }
+
+  function makeKeyModifiers(flags) {
+    const group = document.createElement("fieldset");
+    group.className = "map-key-modifiers";
+    const legend = document.createElement("legend");
+    legend.textContent = "修飾キー";
+    const options = document.createElement("div");
+    for (let index = 0; index < 8; index++) {
+      const label = document.createElement("label");
+      label.className = "check-option";
+      const input = document.createElement("input");
+      const flag = 1 << index;
+      input.type = "checkbox";
+      input.value = flag;
+      input.checked = Boolean(flags & flag);
+      input.setAttribute("data-key-modifier", "");
+      label.append(input, usageLabels.get(0xe0 + index));
+      options.append(label);
+    }
+    group.append(legend, options);
+    return group;
+  }
+
   function closeKeySuggestions(field) {
     field.parentElement.querySelector(".key-suggestions").hidden = true;
     field.setAttribute("aria-expanded", "false");
@@ -630,12 +657,19 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     }));
   }
 
-  function setBindingDraft(id, values = [], preferred = null) {
+  function setBindingDraft(id, values = [], preferred = null, modifierFlags = values[0] >>> 24) {
     const select = elements["map-behavior"];
     select.value = id ?? "";
     const types = selectedEncoder() ? [2, 2] : behaviors.get(id)?.parameters ?? [];
-    elements["map-parameters"].replaceChildren(...types.flatMap((kind, index) =>
-      kind ? [makeParameter(kind, values[index], index, id)] : []));
+    const hasModifiers = id === features.keyPress && types[0] === 2;
+    const fields = types.flatMap((kind, index) => {
+      if (!kind) return [];
+      const value = values[index];
+      const base = hasModifiers && index === 0 && value !== undefined ? value & 0xffffff : value;
+      return [makeParameter(kind, base, index, id)];
+    });
+    if (hasModifiers) fields.push(makeKeyModifiers(modifierFlags));
+    elements["map-parameters"].replaceChildren(...fields);
     const first = types.indexOf(2);
     activeKeyParameter = types[preferred] === 2 ? preferred : first < 0 ? null : first;
     drawPaletteTargets(id);
@@ -654,7 +688,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       if (value !== "") values[index] = Number(value);
       else if (field.hasAttribute("data-key-parameter") && field.value) queries.push([index, field.value]);
     }
-    setBindingDraft(selected === "" ? undefined : Number(selected), values, activeKeyParameter);
+    setBindingDraft(selected === "" ? undefined : Number(selected), values, activeKeyParameter, keyModifierFlags());
     for (const [index, query] of queries) {
       const field = group.querySelector(`[data-key-parameter="${index}"]`);
       field.value = query;
@@ -1082,7 +1116,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   elements["map-us"].addEventListener("click", () => changeLayout("us"));
   elements["map-jis"].addEventListener("click", () => changeLayout("jis"));
   elements["map-parameters"].addEventListener("input", event => {
-    if (!event.target.matches("[data-parameter]")) return;
+    if (!event.target.matches("[data-parameter], [data-key-modifier]")) return;
     markPalette();
     showMapDraft();
   });
@@ -1096,6 +1130,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       if (value === "") return;
       params[Number(field.dataset.parameter)] = Number(value);
     }
+    if (id === features.keyPress) params[0] += keyModifierFlags() * 0x1000000;
     void applyBinding(id, params, false, elements["map-save"]);
   });
   function discardMacroDraft() {

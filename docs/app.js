@@ -1,5 +1,5 @@
 import { ConnectionError, SerialDevice, delay } from "./serial.js?v=gui-encoders";
-import { setupEditors } from "./editors.js?v=keymap-default";
+import { setupEditors } from "./editors.js?v=key-press-modifiers";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
 import { DemoDevice } from "./demo.js?v=sylvatwin";
 

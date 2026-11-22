@@ -222,6 +222,11 @@ footer { margin-top: 1.4rem; font-size: .875rem; color: var(--muted); line-heigh
 .map-fields > div:first-child, .parameter-fields > div { min-width: min(100%, 10rem); }
 .map-fields > div:first-child { width: min(100%, 24rem); }
 .map-fields .key-parameter { width: min(100%, 12rem); }
+.map-key-modifiers { margin: 0; padding: 0; min-width: 0; width: 100%; border: 0; }
+.map-key-modifiers legend { padding: 0; font-size: .875rem; font-weight: 650; }
+.map-key-modifiers > div { display: flex; flex-wrap: wrap; gap: .45rem 1rem; margin-top: .4rem; }
+.map-key-modifiers .check-option { margin: 0; white-space: nowrap; }
+.map-key-modifiers input { padding: 0; }
 [data-encoder] .parameter-fields { flex: 1; }
 .key-parameter { position: relative; }
 .key-suggestions {
