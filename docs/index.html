@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light">
   <meta name="description" content="ZMK のキーマップ、コンボ、マクロを USB 接続で編集します。">
   <title>ZMK Dynamic Keymapper</title>
-  <link rel="stylesheet" href="./styles.css?v=gui-encoders">
+  <link rel="stylesheet" href="./styles.css?v=demo-notice">
   <script type="module">
-    import("./app.js?v=gui-encoders").catch(error => {
+    import("./app.js?v=keymap-default").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -35,15 +35,15 @@
       </div>
     </div>
     <nav class="editor-nav" aria-label="設定画面">
-      <button id="show-keymap" type="button" aria-pressed="false" aria-controls="keymap-panel">キーマップ<span id="map-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
-      <button id="show-combos" type="button" aria-pressed="true" aria-controls="combos-panel">コンボ<span id="combo-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+      <button id="show-keymap" type="button" aria-pressed="true" aria-controls="keymap-panel">キーマップ<span id="map-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+      <button id="show-combos" type="button" aria-pressed="false" aria-controls="combos-panel">コンボ<span id="combo-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
       <button id="show-macros" type="button" aria-pressed="false" aria-controls="macros-panel">マクロ<span id="macro-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
     </nav>
   </header>
 
   <main>
     <p id="notice" class="notice" aria-live="polite" hidden></p>
-    <p id="demo-notice" class="notice" hidden>SylvaTwin（52キー）のデモです。変更はデモ終了時にリセットされます。</p>
+    <p id="demo-notice" class="notice" hidden>デモ中です。変更はデモ終了時にリセットされます。</p>
     <p id="legacy-unlock-notice" class="notice" role="status" hidden>このファームウェアでは保存ごとに解除キーを押します。接続時に一度だけ解除するには、ZDKM を含むファームウェアを更新してください。</p>
     <noscript><p class="notice" data-kind="error">USB 接続を使うには、このページで JavaScript を許可してください。</p></noscript>
 

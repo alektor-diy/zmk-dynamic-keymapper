@@ -87,7 +87,7 @@ h2 { font-size: 1.12rem; line-height: 1.45; }
 .physical-encoder .keycap-code { max-width: 75%; }
 .combo-keys .keyboard-surface { margin: .65rem 0 .8rem; padding: .75rem; }
 .combo-keys .keyboard { max-width: 620px; }
-.map-keyboard-surface .keyboard { max-width: 545px; }
+.map-keyboard-surface .keyboard { max-width: 940px; }
 
 .editor-form { padding: 0 1.15rem 1.15rem; }
 .input-grid { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: .7rem; }
@@ -166,7 +166,7 @@ select {
 .notice { margin-bottom: 1rem; padding: .6rem .85rem; color: var(--muted); background: var(--subtle); border: 1px solid var(--border); border-radius: 7px; line-height: 1.5; font-size: .875rem; }
 .notice[data-kind="error"] { color: #8f1837; background: #fff0f4; border-color: #f2c7d2; }
 .notice[data-kind="success"] { color: #156245; background: #f0f8f4; border-color: #c9e4d6; }
-#demo-notice { margin-bottom: 1.25rem; }
+#demo-notice { margin-bottom: 1.25rem; color: #934b54; background: #fff5f5; border-color: #f2d7db; }
 footer { margin-top: 1.4rem; font-size: .875rem; color: var(--muted); line-height: 1.6; }
 .editor-nav, .layer-picker, .layout-picker, .extra-key-palette, .palette-targets { display: flex; flex-wrap: wrap; gap: .4rem; }
 .editor-nav { gap: .25rem; }

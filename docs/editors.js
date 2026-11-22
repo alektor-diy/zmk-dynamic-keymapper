@@ -89,7 +89,7 @@ function keySequence(keys) {
 }
 
 export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice, state }) {
-  let page = "combos";
+  let page = "keymap";
   let keyboardLayout = "us";
   try {
     if (localStorage.getItem(LAYOUT_SETTING) === "jis") keyboardLayout = "jis";
