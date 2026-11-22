@@ -1,0 +1,151 @@
+<section id="zdkm-keymap-size" aria-label="SylvaTwin キーマップのサイズ比較">
+  <div class="size-settings">
+    <div class="size-setting">
+      <div class="size-label"><label for="zdkm-board-width">キーボードの最大幅</label><output for="zdkm-board-width" id="zdkm-width-value">545 px</output></div>
+      <input id="zdkm-board-width" type="range" min="545" max="940" step="5" value="545">
+      <span class="size-baseline">現行 545 px</span>
+    </div>
+    <div class="size-setting">
+      <div class="size-label"><label for="zdkm-label-size">キーの文字サイズ</label><output for="zdkm-label-size" id="zdkm-text-value">100%</output></div>
+      <input id="zdkm-label-size" type="range" min="100" max="160" step="5" value="100">
+      <span class="size-baseline">現行相当 100%</span>
+    </div>
+  </div>
+  <div class="viz-dotted-background size-stage">
+    <div class="size-panel">
+      <div class="size-heading"><h2>キーマップ</h2><span>SylvaTwin · Base</span></div>
+      <div class="size-surface">
+        <div class="size-board" role="group" aria-label="SylvaTwin の52キーと左側のエンコーダー">
+          <div class="size-half" role="group" aria-label="左手側"></div>
+          <div class="size-half" role="group" aria-label="右手側"></div>
+        </div>
+      </div>
+      <p class="size-actual" id="zdkm-cap-value" aria-live="polite"></p>
+    </div>
+  </div>
+</section>
+<style>
+  #zdkm-keymap-size {
+    color-scheme: light dark;
+    --ink: light-dark(#242622, #f0f0e9);
+    --muted: light-dark(#595c55, #b9bbaf);
+    --panel: light-dark(#fff, #22231f);
+    --deck: light-dark(#f5f5f2, #2e3029);
+    --edge: light-dark(#dedfd8, #494c41);
+    --key-edge: light-dark(#b6b8af, #65685a);
+    --selected: light-dark(#ffd000, #efc300);
+    --board-width: 545px;
+    --legend: 12.8px;
+    --code: 8.6px;
+    color: var(--ink);
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  #zdkm-keymap-size .size-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 15px 22px; margin-bottom: 14px; }
+  #zdkm-keymap-size .size-setting { display: grid; gap: 2px; min-width: 0; }
+  #zdkm-keymap-size .size-label { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
+  #zdkm-keymap-size output, #zdkm-keymap-size .size-actual { font-variant-numeric: tabular-nums; }
+  #zdkm-keymap-size input { width: 100%; margin: 2px 0; accent-color: light-dark(#695500, #efc300); min-height: 25px; }
+  #zdkm-keymap-size .size-baseline, #zdkm-keymap-size .size-actual, #zdkm-keymap-size .size-heading span { color: var(--muted); font-size: 12px; }
+  #zdkm-keymap-size .size-stage { padding: 8px; }
+  #zdkm-keymap-size .size-panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 12px; }
+  #zdkm-keymap-size .size-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 12px; margin-bottom: 9px; }
+  #zdkm-keymap-size .size-heading h2 { font-size: 16px; font-weight: 650; }
+  #zdkm-keymap-size .size-surface { container-type: inline-size; background: var(--deck); border-radius: 9px; padding: 10px 8px; }
+  #zdkm-keymap-size .size-board { display: grid; grid-template-columns: repeat(2, 7fr); gap: 0 17.65%; width: min(100%, var(--board-width)); margin-inline: auto; }
+  #zdkm-keymap-size .size-half { position: relative; aspect-ratio: 7 / 4; }
+  #zdkm-keymap-size .size-key {
+    position: absolute; display: grid; align-content: center; justify-items: center; gap: 1px; box-sizing: border-box;
+    padding: 0 2px; border: 1px solid var(--key-edge); border-radius: 6px; background: var(--panel); overflow: hidden;
+    box-shadow: inset 0 -2px color-mix(in srgb, var(--key-edge) 31%, transparent);
+    font: 600 var(--legend)/1.04 ui-monospace, monospace;
+  }
+  #zdkm-keymap-size .size-key span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #zdkm-keymap-size .size-key small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: inherit; font-size: var(--code); }
+  #zdkm-keymap-size .size-key.is-highlighted { background: var(--selected); border-color: #987a00; color: #242622; }
+  #zdkm-keymap-size .is-highlighted small { color: #413800; }
+  #zdkm-keymap-size .size-key.is-encoder { border-radius: 50%; border-width: 2px; }
+  #zdkm-keymap-size .size-actual { margin: 8px 0 0; }
+  @container (max-width: 550px) {
+    #zdkm-keymap-size .size-board { grid-template-columns: minmax(0, 1fr); width: min(100%, calc(var(--board-width) * 7 / 17)); gap: 8px; }
+  }
+  @media (pointer: coarse) { #zdkm-keymap-size input { min-height: 44px; } }
+</style>
+<script>
+(() => {
+  const root = document.getElementById('zdkm-keymap-size');
+  const width = root.querySelector('#zdkm-board-width');
+  const font = root.querySelector('#zdkm-label-size');
+  const board = root.querySelector('.size-board');
+  const [left, right] = board.querySelectorAll('.size-half');
+  const rows = [
+    [['Esc|ESC','Q','W','E','R','T'], ['Y','U','I','O','P','⌫|BSPC']],
+    [['Tab|TAB','A','S','D','F','G'], ['H','J','K','L','/|SLASH','↵|ENTER']],
+    [['⇧|LSHIFT','Z','X','C','V','B','Click|LCLK'], ['Click|LCLK','N','M',',|COMMA','.|DOT','↑|UP','⇧|RSHIFT']],
+    [['Ctrl|LCTRL','GUI|LGUI','Alt|LALT','—','Del|DEL','Space|SPACE','LT 1|F7'], ['LT 2|F10','—','−|MINUS','—','←|LEFT','↓|DOWN','→|RIGHT']],
+  ];
+
+  function appendKey(half, column, row, label, encoder = false) {
+    const [legend, code = legend] = label.split('|');
+    const key = document.createElement('div');
+    key.className = 'size-key';
+    key.classList.toggle('is-encoder', encoder);
+    key.classList.toggle('is-highlighted', half === left && column === 1 && row === 1);
+    key.style.left = `${(column + 0.05) * 100 / 7}%`;
+    key.style.top = `${(row + 0.05) * 25}%`;
+    key.style.width = `${90 / 7}%`;
+    key.style.height = '22.5%';
+    key.setAttribute('aria-label', encoder ? 'ロータリーエンコーダー、音量アップ・ダウン' : `${legend} ${code}`);
+    const name = document.createElement('span');
+    name.textContent = legend;
+    key.append(name);
+    if (code !== '—') {
+      const detail = document.createElement('small');
+      detail.textContent = code;
+      key.append(detail);
+    }
+    half.append(key);
+  }
+
+  rows.forEach(([leftLabels, rightLabels], row) => {
+    leftLabels.forEach((label, column) => appendKey(left, column, row, label));
+    rightLabels.forEach((label, column) => appendKey(right, column + 7 - rightLabels.length, row, label));
+  });
+  appendKey(left, 6, 0.5, '↻ ↺|VOL', true);
+
+  function showActualSize() {
+    const key = left.firstElementChild.getBoundingClientRect();
+    const size = Math.round(key.width);
+    root.querySelector('#zdkm-cap-value').textContent = `このプレビューの1キー 約 ${size} × ${size} px`;
+  }
+
+  function render() {
+    const scale = Number(font.value) / 100;
+    root.style.setProperty('--board-width', `${width.value}px`);
+    root.style.setProperty('--legend', `${12.8 * scale}px`);
+    root.style.setProperty('--code', `${8.64 * scale}px`);
+    root.querySelector('#zdkm-width-value').value = `${width.value} px`;
+    root.querySelector('#zdkm-text-value').value = `${font.value}%`;
+    showActualSize();
+  }
+
+  function restore(saved) {
+    if (Number.isFinite(saved?.maxWidth)) width.value = saved.maxWidth;
+    if (Number.isFinite(saved?.labelScale)) font.value = saved.labelScale;
+    render();
+  }
+
+  function save() {
+    window.openai?.setWidgetState?.({
+      modelContent: { maxWidth: Number(width.value), labelScale: Number(font.value) },
+    })?.catch(() => {});
+  }
+
+  for (const slider of [width, font]) {
+    slider.addEventListener('input', render);
+    slider.addEventListener('change', save);
+  }
+  window.addEventListener('openai:set_globals', event => restore(event.detail?.globals?.widgetState?.modelContent));
+  new ResizeObserver(showActualSize).observe(left);
+  restore(window.openai?.widgetState?.modelContent);
+})();
+</script>
