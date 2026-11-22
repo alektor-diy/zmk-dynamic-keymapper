@@ -1,10 +1,12 @@
 #include <errno.h>
 #include <string.h>
 
+#include <dt-bindings/zmk/bt.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
+#include <zmk/ble.h>
 #include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/keymap.h>
 #include <zmk/physical_layouts.h>
@@ -307,6 +309,55 @@ static uint8_t param_kind(size_t count, const struct behavior_parameter_value_me
     }
 }
 
+static bool bluetooth_behavior(const char *name) {
+#if IS_ENABLED(CONFIG_ZMK_BLE) && DT_NODE_HAS_STATUS(DT_NODELABEL(bt), okay)
+    return name && strcmp(name, DEVICE_DT_NAME(DT_NODELABEL(bt))) == 0;
+#else
+    ARG_UNUSED(name);
+    return false;
+#endif
+}
+
+static unsigned int bluetooth_profile_count(void) {
+#if IS_ENABLED(CONFIG_ZMK_BLE)
+    return ZMK_BLE_PROFILE_COUNT;
+#else
+    return 0;
+#endif
+}
+
+static bool bluetooth_profile_command(uint32_t command) {
+    return command == BT_SEL_CMD || command == BT_DISC_CMD;
+}
+
+static void behavior_operation(char *response, size_t size, const struct zmk_behavior_ref *ref,
+                               uint16_t index) {
+    bool bluetooth = bluetooth_behavior(ref->device->name);
+    bool supported = bluetooth;
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(out), okay)
+    supported |= strcmp(ref->device->name, DEVICE_DT_NAME(DT_NODELABEL(out))) == 0;
+#endif
+    struct behavior_parameter_metadata info;
+    if (supported && behavior_get_parameter_metadata(ref->device, &info) >= 0) {
+        for (size_t i = 0; i < info.sets_len; ++i) {
+            const struct behavior_parameter_metadata_set *set = &info.sets[i];
+            for (size_t j = 0; j < set->param1_values_len; ++j) {
+                const struct behavior_parameter_value_metadata *entry = &set->param1_values[j];
+                const char *label = line_label(entry->display_name, NULL);
+                if (entry->type != BEHAVIOR_PARAMETER_VALUE_TYPE_VALUE || !label) continue;
+                bool needs_profile = bluetooth && bluetooth_profile_command(entry->value);
+                unsigned int profiles = needs_profile ? bluetooth_profile_count() : 0;
+                if (needs_profile && !profiles) continue;
+                if (index-- != 0) continue;
+                snprintk(response, size, "OK BEHAVIOROPS %u %u %s",
+                         (unsigned int)entry->value, profiles, label);
+                return;
+            }
+        }
+    }
+    snprintk(response, size, "OK BEHAVIOROPS END");
+}
+
 static bool valid_layer_name(const uint8_t *name, size_t len) {
     if (!len || name[0] == ' ' || name[len - 1] == ' ') return false;
     for (size_t i = 0; i < len;) {
@@ -402,6 +453,13 @@ static bool process_editor_command(const char *operation, char *cursor, const ch
         snprintk(response, sizeof(response), "OK BEHAVIOR %u %u %u %u %s",
                  zmk_behavior_get_local_id(ref->device->name), first, second, err >= 0,
                  line_label(ref->metadata.display_name, ref->device->name));
+    } else if (strcmp(operation, "BEHAVIOROPS") == 0) {
+        uint16_t entry;
+        if (!take_number(&cursor, UINT16_MAX, &index) ||
+            !take_number(&cursor, UINT16_MAX, &entry) || take_word(&cursor)) goto invalid;
+        const struct zmk_behavior_ref *ref = zdkm_behavior_at(index);
+        if (!ref) goto invalid;
+        behavior_operation(response, sizeof(response), ref, entry);
     } else if (strcmp(operation, "BIND") == 0 || strcmp(operation, "BINDSET") == 0) {
         uint16_t position;
         if (!take_number(&cursor, zdkm_layer_count() - 1, &index) ||
@@ -417,6 +475,8 @@ static bool process_editor_command(const char *operation, char *cursor, const ch
                 return true;
             }
             binding.behavior_dev = zmk_behavior_find_behavior_name_from_local_id(id);
+            if (bluetooth_behavior(binding.behavior_dev) && bluetooth_profile_command(binding.param1) &&
+                binding.param2 >= bluetooth_profile_count()) goto invalid;
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
             binding.local_id = id;
 #endif
