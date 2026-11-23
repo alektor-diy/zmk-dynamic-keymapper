@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light">
   <meta name="description" content="ZMK のキーマップ、コンボ、マクロを USB 接続で編集します。">
   <title>ZMK Dynamic Keymapper</title>
-  <link rel="stylesheet" href="./styles.css?v=key-press-modifiers">
+  <link rel="stylesheet" href="./styles.css?v=usage-layout">
   <script type="module">
-    import("./app.js?v=behavior-operations").catch(error => {
+    import("./app.js?v=usage-layout").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -33,12 +33,18 @@
         <button id="connect" class="primary" type="button" disabled>USB で接続</button>
         <button id="demo" class="secondary" type="button" disabled>デモを試す</button>
       </div>
+      <nav class="editor-nav" aria-label="設定画面">
+        <button id="show-keymap" type="button" aria-pressed="true" aria-controls="keymap-panel">キーマップ<span id="map-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+        <button id="show-combos" type="button" aria-pressed="false" aria-controls="combos-panel">コンボ<span id="combo-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+        <button id="show-macros" type="button" aria-pressed="false" aria-controls="macros-panel">マクロ<span id="macro-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
+      </nav>
+      <div class="row-actions backup-actions" role="group" aria-label="設定ファイル">
+        <button id="backup-export" class="secondary compact" type="button" disabled>設定を書き出す</button>
+        <button id="backup-import" class="secondary compact" type="button" disabled>設定を読み込む</button>
+        <button id="backup-recovery" class="secondary compact" type="button" hidden>復元前の設定を書き出す</button>
+        <input id="backup-file" type="file" accept=".json,application/json" hidden>
+      </div>
     </div>
-    <nav class="editor-nav" aria-label="設定画面">
-      <button id="show-keymap" type="button" aria-pressed="true" aria-controls="keymap-panel">キーマップ<span id="map-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
-      <button id="show-combos" type="button" aria-pressed="false" aria-controls="combos-panel">コンボ<span id="combo-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
-      <button id="show-macros" type="button" aria-pressed="false" aria-controls="macros-panel">マクロ<span id="macro-nav-dirty" class="nav-dirty" aria-hidden="true" hidden></span></button>
-    </nav>
   </header>
 
   <main>
@@ -98,7 +104,10 @@
               </div>
               <div>
                 <label for="usage">出力する動作</label>
-                <select id="usage" disabled required></select>
+                <div class="key-picker-field">
+                  <select id="usage" disabled required></select>
+                  <button id="combo-pick-usage" class="secondary compact" type="button" aria-haspopup="dialog" disabled>キーを選ぶ</button>
+                </div>
               </div>
               <div id="combo-scope" hidden>
                 <label for="layers">対象レイヤー</label>
@@ -228,6 +237,22 @@
     </section>
   </main>
 
+  <dialog id="usage-picker" aria-labelledby="usage-picker-heading">
+    <div class="panel-header usage-picker-header">
+      <h2 id="usage-picker-heading">キーを選ぶ</h2>
+      <div class="layout-picker" role="group" aria-label="キー配列">
+        <button id="usage-us" class="secondary compact" type="button" aria-pressed="true">US</button>
+        <button id="usage-jis" class="secondary compact" type="button" aria-pressed="false">JIS</button>
+      </div>
+    </div>
+    <div class="palette-surface">
+      <div id="usage-palette" class="full-size-palette" role="group" aria-label="フルサイズのキー候補"></div>
+    </div>
+    <div id="usage-extra-keys" class="extra-key-palette" role="group" aria-label="その他のキー候補"></div>
+    <form class="form-actions" method="dialog">
+      <button class="secondary" autofocus>キャンセル</button>
+    </form>
+  </dialog>
   <dialog id="unlock-dialog" aria-labelledby="unlock-heading">
     <form method="dialog">
       <h2 id="unlock-heading">キーボードのロックを解除</h2>
@@ -246,6 +271,16 @@
       <div class="form-actions">
         <button class="secondary" value="cancel" autofocus>キャンセル</button>
         <button class="danger" value="confirm">削除する</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="backup-dialog" aria-labelledby="backup-heading">
+    <form method="dialog">
+      <h2 id="backup-heading">設定を復元しますか？</h2>
+      <p id="backup-description"></p>
+      <div class="form-actions">
+        <button class="secondary" value="cancel" autofocus>キャンセル</button>
+        <button class="primary" value="confirm">復元する</button>
       </div>
     </form>
   </dialog>

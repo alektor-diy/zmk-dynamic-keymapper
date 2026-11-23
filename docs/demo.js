@@ -74,6 +74,8 @@ export class DemoDevice {
   }
 
   async layout() { return this.keys; }
+  async backupIdentity() { return ["sylvatwin-demo"]; }
+  async checkRestoreCommand() {}
   async encoderLayout() { return [{ ...geometry(600, 50), encoder: 0 }]; }
   async encoderBinding(layer, index) { return index === 0 ? this.encoderBindings[layer] : null; }
   async combos() { return [...this.comboTable.values()].sort((a, b) => a.slot - b.slot); }
@@ -88,7 +90,7 @@ export class DemoDevice {
     const [operation, ...args] = command.trim().split(" ");
     if (operation === "LAYERSET") {
       const [layer, hex] = args;
-      this.names[Number(layer)] = new TextDecoder().decode(
+      this.names[Number(layer)] = hex === "-" ? "" : new TextDecoder().decode(
         Uint8Array.from(hex.match(/../g), byte => Number.parseInt(byte, 16)));
       return;
     }

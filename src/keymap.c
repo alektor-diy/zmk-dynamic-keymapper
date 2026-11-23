@@ -2,6 +2,8 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/crc.h>
 #include <zmk/keymap.h>
 #if IS_ENABLED(CONFIG_ZMK_STUDIO_RPC)
 #include <zmk/studio/rpc.h>
@@ -44,6 +46,27 @@ const struct zmk_behavior_ref *zdkm_behavior_at(size_t index) {
     return NULL;
 }
 
+#define STOCK_LAYER_NAME(node) DT_PROP_OR(node, display_name, DT_PROP_OR(node, label, ""))
+static const char *const stock_layer_names[] = {
+    DT_FOREACH_CHILD_SEP(DT_INST(0, zmk_keymap), STOCK_LAYER_NAME, (, ))};
+
+uint32_t zdkm_backup_behavior_id(void) {
+    uint32_t crc = 0;
+    STRUCT_SECTION_FOREACH(zmk_behavior_ref, ref) {
+        if (!device_is_ready(ref->device)) continue;
+        const char *name = ref->device->name;
+        uint8_t id[2];
+        sys_put_le16(zmk_behavior_get_local_id(name), id);
+        crc = crc32_ieee_update(crc, id, sizeof(id));
+        crc = crc32_ieee_update(crc, (const uint8_t *)name, strlen(name) + 1);
+    }
+    for (size_t i = 0; i < zdkm_layer_count(); ++i) {
+        const char *name = stock_layer_names[i];
+        crc = crc32_ieee_update(crc, (const uint8_t *)name, strlen(name) + 1);
+    }
+    return crc;
+}
+
 /* The serial worker is the sole submitter. Run the mutation alongside position handling
  * so a key cannot start using the old binding while it is being replaced.
  */
@@ -56,16 +79,27 @@ static struct {
 } edit;
 K_SEM_DEFINE(edit_done, 0, 1);
 
-static int set_binding(void) {
-    const struct zmk_behavior_binding *current =
-        zmk_keymap_get_layer_binding_at_idx(edit.layer, edit.position);
+static int check_current_binding(const struct zmk_behavior_binding *current,
+                                 const struct zmk_behavior_binding *replacement) {
     if (!current) return -EINVAL;
     if (current->behavior_dev &&
         strcmp(current->behavior_dev, DEVICE_DT_NAME(DT_NODELABEL(zdkm_unlock))) == 0 &&
-        strcmp(current->behavior_dev, edit.binding.behavior_dev) != 0) return -EPERM;
-    if (current->behavior_dev && strcmp(current->behavior_dev, edit.binding.behavior_dev) == 0 &&
-        current->param1 == edit.binding.param1 && current->param2 == edit.binding.param2) return -EALREADY;
+        (!replacement->behavior_dev || strcmp(current->behavior_dev, replacement->behavior_dev) != 0)) {
+        return -EPERM;
+    }
+    return 0;
+}
 
+static int set_binding(void) {
+    const struct zmk_behavior_binding *current =
+        zmk_keymap_get_layer_binding_at_idx(edit.layer, edit.position);
+    int err = check_current_binding(current, &edit.binding);
+    if (err < 0) return err;
+    bool same_behavior = current->behavior_dev == edit.binding.behavior_dev ||
+                         (current->behavior_dev && edit.binding.behavior_dev &&
+                          strcmp(current->behavior_dev, edit.binding.behavior_dev) == 0);
+    if (same_behavior && current->param1 == edit.binding.param1 &&
+        current->param2 == edit.binding.param2) return -EALREADY;
     return zmk_keymap_set_layer_binding_at_idx(edit.layer, edit.position, edit.binding);
 }
 
@@ -122,7 +156,8 @@ static int submit_edit(void) {
 }
 
 int zdkm_set_binding(uint8_t layer, uint8_t position, const struct zmk_behavior_binding *binding) {
-    if (!binding->behavior_dev || zmk_behavior_validate_binding(binding) < 0) return -EINVAL;
+    int err = zdkm_check_binding(layer, position, binding);
+    if (err < 0) return err;
     edit.layer = layer;
     edit.position = position;
     edit.binding = *binding;
@@ -130,12 +165,26 @@ int zdkm_set_binding(uint8_t layer, uint8_t position, const struct zmk_behavior_
     return submit_edit();
 }
 
-int zdkm_rename_layer(uint8_t layer, const char *name) {
+int zdkm_check_binding(uint8_t layer, uint8_t position, const struct zmk_behavior_binding *binding) {
+    if (binding->behavior_dev ? zmk_behavior_validate_binding(binding) < 0 :
+                                binding->param1 || binding->param2) return -EINVAL;
+    return check_current_binding(zmk_keymap_get_layer_binding_at_idx(layer, position), binding);
+}
+
+int zdkm_check_layer_name(uint8_t layer, const char *name) {
+    if (layer >= zdkm_layer_count()) return -EINVAL;
+    /* An empty persisted value removes the override and reveals the stock name. */
+    if (!*name && *stock_layer_names[layer]) return -EINVAL;
     for (size_t index = 0; index < zdkm_layer_count(); ++index) {
-        if (zmk_keymap_layer_index_to_id(index) != layer) continue;
-        edit.layer = layer;
-        edit.name = name;
-        return submit_edit();
+        if (zmk_keymap_layer_index_to_id(index) == layer) return 0;
     }
     return -EINVAL;
+}
+
+int zdkm_rename_layer(uint8_t layer, const char *name) {
+    int err = zdkm_check_layer_name(layer, name);
+    if (err < 0) return err;
+    edit.layer = layer;
+    edit.name = name;
+    return submit_edit();
 }

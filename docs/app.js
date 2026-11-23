@@ -1,7 +1,8 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=behavior-operations";
-import { setupEditors } from "./editors.js?v=behavior-operations";
+import { ConnectionError, SerialDevice, delay } from "./serial.js?v=settings-backup";
+import { setupEditors } from "./editors.js?v=usage-layout";
 import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
-import { DemoDevice } from "./demo.js?v=behavior-operations";
+import { DemoDevice } from "./demo.js?v=settings-backup";
+import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=settings-backup";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
@@ -43,6 +44,10 @@ let busy = false;
 let choosingPort = false;
 let legacyUnlock = false;
 let connectionVersion = 0;
+let backupContext = null;
+let recovery = null;
+let restoreInProgress = false;
+let fileConnection = null;
 
 function notice(message = "", kind = "info") {
   elements.notice.hidden = !message;
@@ -145,6 +150,7 @@ function refreshEditor() {
   elements["combo-delete"].disabled = !editable;
   elements["combo-new"].disabled = !editable || creatingCombo || combos.length >= info.slots;
   elements.usage.disabled = !editable;
+  elements["combo-pick-usage"].disabled = !editable;
   elements.save.disabled = !editable || !data.dirty || !data.valid;
   elements.positions.disabled = !editable;
   elements["combo-scope"].hidden = !extended;
@@ -308,6 +314,9 @@ function renderState() {
   elements.connect.disabled = !supportsSerial || demo || (busy && !device && !choosingPort);
   elements.demo.textContent = demo ? "デモを終了" : "デモを試す";
   elements.demo.disabled = busy || (!!device && !demo);
+  elements["backup-export"].disabled = !backupContext || busy;
+  elements["backup-import"].disabled = !backupContext || busy;
+  elements["backup-recovery"].hidden = !recovery;
   elements["demo-notice"].hidden = !demo;
   elements["legacy-unlock-notice"].hidden = !legacyUnlock;
   for (const id of ["save", "map-save", "macro-save"]) {
@@ -334,6 +343,7 @@ async function disconnect(message = "", kind = "info") {
   device = null;
   info = null;
   caps = null;
+  backupContext = null;
   combos = [];
   comboSyncRequired = null;
   choosingPort = false;
@@ -343,6 +353,7 @@ async function disconnect(message = "", kind = "info") {
   editors.setConnection(null, [], 0);
   if (elements["delete-dialog"].open) elements["delete-dialog"].close("cancel");
   if (elements["discard-dialog"].open) elements["discard-dialog"].close("cancel");
+  if (elements["backup-dialog"].open) elements["backup-dialog"].close("cancel");
   showCombo();
   comboResult();
   setOutputOptions();
@@ -372,6 +383,8 @@ async function loadDevice(attached, version) {
   if (version !== connectionVersion) return;
   info = current;
   caps = capabilities;
+  backupContext = editorCaps && !capabilities.legacy && current.count <= 256
+    ? { caps, keys, features: editorCaps, encoders } : null;
   combos = saved;
   editors.setConnection(editorCaps, keys, capabilities.layerCount, encoders);
   setOutputOptions();
@@ -522,6 +535,112 @@ async function run(operation, reportError) {
   }
 }
 
+function downloadBackup(backup, prefix) {
+  const blob = new Blob([JSON.stringify(backup, null, 2) + "\n"], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${prefix}-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function showBackupProgress(attached, message) {
+  return (index, count) => {
+    if (device === attached) notice(`${message}（レイヤー ${index} / ${count}）`);
+  };
+}
+
+function confirmRestore(count) {
+  const dialog = elements["backup-dialog"];
+  const draft = hasUnsavedCombo() || editors.hasDraft() ? "実行すると編集中の変更は破棄されます。" : "";
+  elements["backup-description"].textContent =
+    `キーボードの設定をファイルの内容で上書きします（${count} 件の書き込み）。${draft}`;
+  dialog.returnValue = "cancel";
+  return new Promise(resolve => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+    dialog.showModal();
+  });
+}
+
+async function importBackup(file) {
+  let refreshed = false;
+  await run(async attached => {
+    const context = backupContext;
+    notice("設定ファイルを確認しています。");
+    const desired = await readBackupFile(file);
+    if (device !== attached) return;
+    const previous = await captureBackup(attached, context, showBackupProgress(attached, "現在の設定を読み込み中"));
+    if (device !== attached) return;
+    const changes = planRestore(previous, desired);
+    if (!changes.length) {
+      notice("設定ファイルの内容は現在の設定と同じです。");
+      return;
+    }
+    if (previous.compatibility.firmware !== null) {
+      notice("キーボードで書き込み内容を検証しています。");
+      for (const change of changes) {
+        if (device !== attached) return;
+        if (!change.check) continue;
+        try {
+          await attached.checkRestoreCommand(change.check);
+        } catch (error) {
+          if (error instanceof ConnectionError) throw error;
+          throw new Error(`${change.label}を復元できません。 ${error.message}`, { cause: error });
+        }
+      }
+    }
+    if (device !== attached || !await confirmRestore(changes.length) || device !== attached) {
+      if (device === attached) notice();
+      return;
+    }
+
+    const target = JSON.stringify(desired);
+    const port = attached.port ?? attached;
+    if (recovery?.target !== target || recovery.port !== port) {
+      recovery = { backup: previous, target, port };
+    }
+    restoreInProgress = true;
+    renderState();
+    let completed = 0;
+    try {
+      for (const change of changes) {
+        if (device !== attached) return;
+        notice(`設定を復元中（${completed + 1} / ${changes.length}）`);
+        await attached.save(change.command, (message, phase) => {
+          if (device === attached && phase !== "saved") notice(message);
+        });
+        ++completed;
+        if (change.combo) await settledInfo(attached);
+      }
+      const restored = await captureBackup(attached, context, showBackupProgress(attached, "復元した設定を確認中"));
+      if (device !== attached) return;
+      if (planRestore(restored, desired).length) throw new Error("読み戻した設定がファイルの内容と一致しません。");
+      await loadDevice(attached, connectionVersion);
+      refreshed = device === attached;
+      if (device === attached) notice("設定を復元しました。", "success");
+    } catch (error) {
+      if (device !== attached) return;
+      if (!(error instanceof ConnectionError)) {
+        await loadDevice(attached, connectionVersion).then(() => {
+          refreshed = device === attached;
+        }).catch(() => {});
+      }
+      const message = `復元が途中で止まりました（${completed} / ${changes.length} 件の書き込みを確認）。` +
+        `同じファイルで再試行するか、「復元前の設定を書き出す」で元の設定を保存できます。 ${error.message}`;
+      if (error instanceof ConnectionError) throw new ConnectionError(message, { cause: error });
+      throw new Error(message, { cause: error });
+    } finally {
+      restoreInProgress = false;
+    }
+  });
+  if (refreshed) {
+    const { textContent, dataset: { kind } } = elements.notice;
+    editors.loadPage();
+    notice(textContent, kind);
+  }
+}
+
 async function reload() {
   await run(async attached => {
     comboResult("保存済みコンボを読み込んでいます。");
@@ -622,11 +741,36 @@ elements["unlock-dialog"].addEventListener("close", event => {
 elements.demo.addEventListener("click", () => {
   confirmDiscard("デモを終了すると、いまの編集内容は失われます。", () => { void startDemo(); }, true);
 });
+elements["backup-export"].addEventListener("click", () => {
+  void run(async attached => {
+    const backup = await captureBackup(attached, backupContext, showBackupProgress(attached, "設定を読み込み中"));
+    if (device !== attached) return;
+    downloadBackup(backup, "zdkm-settings");
+    notice("設定を書き出しました。", "success");
+  });
+});
+elements["backup-import"].addEventListener("click", () => {
+  fileConnection = device;
+  const field = elements["backup-file"];
+  field.value = "";
+  field.click();
+});
+elements["backup-file"].addEventListener("change", event => {
+  const file = event.target.files[0];
+  if (file && backupContext && device === fileConnection) void importBackup(file);
+  fileConnection = null;
+});
+elements["backup-recovery"].addEventListener("click", () => {
+  if (recovery) downloadBackup(recovery.backup, "zdkm-before-restore");
+});
 elements.refresh.addEventListener("click", () => {
   confirmDiscard("再読み込みすると、いまの編集内容は失われます。", () => { void reload(); });
 });
 elements["combo-new"].addEventListener("click", () => {
   confirmDiscard("新しいコンボを開くと、いまの編集内容は失われます。", () => openCombo(null, true));
+});
+elements["combo-pick-usage"].addEventListener("click", () => {
+  if (canEdit()) editors.chooseUsage("コンボの出力キーを選ぶ", elements.usage);
 });
 elements.clear.addEventListener("click", () => {
   openCombo(selectedCombo() ?? combos[0]);
@@ -671,7 +815,9 @@ window.addEventListener("beforeunload", warnBeforeUnload);
 if (supportsSerial) {
   navigator.serial.addEventListener("disconnect", event => {
     if (device && (event.port ?? event.target) === device.port) {
-      const message = comboSyncRequired ? "保存は完了しました。USB 接続が切れたため、再接続して一覧を確認してください。" :
+      const message = restoreInProgress ?
+        "復元中に USB 接続が切れました。再接続して同じファイルで再試行するか、復元前の設定を書き出してください。" :
+        comboSyncRequired ? "保存は完了しました。USB 接続が切れたため、再接続して一覧を確認してください。" :
         "キーボードの USB 接続が切れました。再接続して保存済み一覧を確認してください。";
       void disconnect(message, "error");
     }

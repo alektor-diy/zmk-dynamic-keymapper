@@ -81,11 +81,16 @@ static bool valid_keycode(uint32_t code) {
     return code && zmk_behavior_validate_binding(&binding) >= 0;
 }
 
-int zdkm_encoder_save(uint8_t layer, uint8_t index, const struct zdkm_encoder_codes *codes) {
+int zdkm_encoder_check(uint8_t layer, uint8_t index, const struct zdkm_encoder_codes *codes) {
     const struct zdkm_encoder_codes *defaults = stock_at(layer, index);
-    if (!defaults || !valid_keycode(codes->clockwise) || !valid_keycode(codes->counterclockwise)) {
-        return -EINVAL;
-    }
+    return defaults && valid_keycode(codes->clockwise) && valid_keycode(codes->counterclockwise)
+               ? 0 : -EINVAL;
+}
+
+int zdkm_encoder_save(uint8_t layer, uint8_t index, const struct zdkm_encoder_codes *codes) {
+    int check = zdkm_encoder_check(layer, index, codes);
+    if (check < 0) return check;
+    const struct zdkm_encoder_codes *defaults = stock_at(layer, index);
     if (zdkm_get_status() == ZDKM_LOADING) return -EBUSY;
 
     struct zdkm_encoder_codes current;
@@ -158,6 +163,10 @@ unsigned int zdkm_encoder_count(void) { return 0; }
 
 int zdkm_encoder_get(uint8_t layer, uint8_t index, struct zdkm_encoder_codes *codes) {
     return -ENOENT;
+}
+
+int zdkm_encoder_check(uint8_t layer, uint8_t index, const struct zdkm_encoder_codes *codes) {
+    return -EINVAL;
 }
 
 int zdkm_encoder_save(uint8_t layer, uint8_t index, const struct zdkm_encoder_codes *codes) {

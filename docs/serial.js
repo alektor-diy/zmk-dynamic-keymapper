@@ -163,6 +163,20 @@ export class SerialDevice {
     }
   }
 
+  async backupIdentity() {
+    try {
+      const { values } = await this.request("BACKUPID", ["BACKUPID"], 2);
+      return values.map(value => integer(value, 0, 0xffffffff));
+    } catch (error) {
+      if (error instanceof ProtocolError && error.code === "UNKNOWN") return null;
+      throw error;
+    }
+  }
+
+  async checkRestoreCommand(command) {
+    await this.request(command, ["VALID"]);
+  }
+
   async keymapLayers(count, layerNameBytes) {
     const layers = [];
     for (let index = 0; index < count; index++) {

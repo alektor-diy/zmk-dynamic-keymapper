@@ -290,6 +290,11 @@ static void send_edit_result(int err) {
     }
 }
 
+static void send_check_result(int err) {
+    if (err == 0) send_line("OK VALID");
+    else send_edit_result(err);
+}
+
 static const char *line_label(const char *label, const char *fallback) {
     return !label || !*label || strlen(label) > 100 || strchr(label, '\r') || strchr(label, '\n')
                ? fallback
@@ -379,7 +384,11 @@ static bool valid_layer_name(const uint8_t *name, size_t len) {
 static bool process_editor_command(const char *operation, char *cursor, const char *token) {
     char response[160];
     uint16_t index;
-    if (strcmp(operation, "FEATURES") == 0) {
+    if (strcmp(operation, "BACKUPID") == 0) {
+        if (take_word(&cursor)) goto invalid;
+        snprintk(response, sizeof(response), "OK BACKUPID %u %u",
+                 (unsigned int)zdkm_backup_layout_id(), (unsigned int)zdkm_backup_behavior_id());
+    } else if (strcmp(operation, "FEATURES") == 0) {
         if (take_word(&cursor)) goto invalid;
         snprintk(response, sizeof(response), "OK FEATURES %u %u %u %u %u",
                  (unsigned int)zdkm_behavior_count(), ZDKM_MACRO_SLOTS, ZDKM_MACRO_STEPS,
@@ -388,14 +397,19 @@ static bool process_editor_command(const char *operation, char *cursor, const ch
     } else if (strcmp(operation, "ENCODERS") == 0) {
         if (take_word(&cursor)) goto invalid;
         snprintk(response, sizeof(response), "OK ENCODERS %u", zdkm_encoder_count());
-    } else if (strcmp(operation, "ENCODER") == 0 || strcmp(operation, "ENCODERSET") == 0) {
+    } else if (strcmp(operation, "ENCODER") == 0 || strcmp(operation, "ENCODERSET") == 0 ||
+               strcmp(operation, "ENCODERCHECK") == 0) {
         uint16_t sensor;
         struct zdkm_encoder_codes codes;
         if (!zdkm_encoder_count() || !take_number(&cursor, zdkm_layer_count() - 1, &index) ||
             !take_number(&cursor, zdkm_encoder_count() - 1, &sensor)) goto invalid;
-        if (strcmp(operation, "ENCODERSET") == 0) {
+        if (strcmp(operation, "ENCODER") != 0) {
             if (!take_uint(&cursor, UINT32_MAX, &codes.clockwise) ||
                 !take_uint(&cursor, UINT32_MAX, &codes.counterclockwise) || take_word(&cursor)) goto invalid;
+            if (strcmp(operation, "ENCODERCHECK") == 0) {
+                send_check_result(zdkm_encoder_check(index, sensor, &codes));
+                return true;
+            }
             if (!auth_state(true, token)) {
                 send_line("ERR LOCKED");
                 return true;
@@ -413,16 +427,23 @@ static bool process_editor_command(const char *operation, char *cursor, const ch
     } else if (strcmp(operation, "LAYEREDIT") == 0) {
         if (take_word(&cursor)) goto invalid;
         snprintk(response, sizeof(response), "OK LAYEREDIT %u", LAYER_NAME_BYTES);
-    } else if (strcmp(operation, "LAYERSET") == 0) {
+    } else if (strcmp(operation, "LAYERSET") == 0 || strcmp(operation, "LAYERCHECK") == 0) {
         if (!take_number(&cursor, zdkm_layer_count() - 1, &index)) goto invalid;
         const char *hex = take_word(&cursor);
         uint8_t name[LAYER_NAME_BYTES + 1];
         if (!hex || take_word(&cursor)) goto invalid;
-        size_t size = strlen(hex);
-        if ((size & 1) || size > 2 * LAYER_NAME_BYTES) goto invalid;
-        size_t len = hex2bin(hex, size, name, LAYER_NAME_BYTES);
-        if (len != size / 2 || !valid_layer_name(name, len)) goto invalid;
+        size_t len = 0;
+        if (strcmp(hex, "-") != 0) {
+            size_t size = strlen(hex);
+            if ((size & 1) || size > 2 * LAYER_NAME_BYTES) goto invalid;
+            len = hex2bin(hex, size, name, LAYER_NAME_BYTES);
+            if (len != size / 2 || !valid_layer_name(name, len)) goto invalid;
+        }
         name[len] = 0;
+        if (strcmp(operation, "LAYERCHECK") == 0) {
+            send_check_result(zdkm_check_layer_name(index, (const char *)name));
+            return true;
+        }
         if (!auth_state(true, token)) {
             send_line("ERR LOCKED");
             return true;
@@ -460,26 +481,34 @@ static bool process_editor_command(const char *operation, char *cursor, const ch
         const struct zmk_behavior_ref *ref = zdkm_behavior_at(index);
         if (!ref) goto invalid;
         behavior_operation(response, sizeof(response), ref, entry);
-    } else if (strcmp(operation, "BIND") == 0 || strcmp(operation, "BINDSET") == 0) {
+    } else if (strcmp(operation, "BIND") == 0 || strcmp(operation, "BINDSET") == 0 ||
+               strcmp(operation, "BINDCHECK") == 0) {
         uint16_t position;
         if (!take_number(&cursor, zdkm_layer_count() - 1, &index) ||
             !take_number(&cursor, MIN(zdkm_position_count() - 1, UINT8_MAX), &position)) goto invalid;
-        if (strcmp(operation, "BINDSET") == 0) {
+        if (strcmp(operation, "BIND") != 0) {
             uint16_t id;
             struct zmk_behavior_binding binding = {0};
-            if (!take_number(&cursor, UINT16_MAX - 1, &id) ||
+            if (!take_number(&cursor, UINT16_MAX, &id) ||
                 !take_uint(&cursor, UINT32_MAX, &binding.param1) ||
                 !take_uint(&cursor, UINT32_MAX, &binding.param2) || take_word(&cursor)) goto invalid;
-            if (!auth_state(true, token)) {
-                send_line("ERR LOCKED");
-                return true;
+            if (id != UINT16_MAX) {
+                binding.behavior_dev = zmk_behavior_find_behavior_name_from_local_id(id);
+                if (!binding.behavior_dev) goto invalid;
             }
-            binding.behavior_dev = zmk_behavior_find_behavior_name_from_local_id(id);
             if (bluetooth_behavior(binding.behavior_dev) && bluetooth_profile_command(binding.param1) &&
                 binding.param2 >= bluetooth_profile_count()) goto invalid;
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
             binding.local_id = id;
 #endif
+            if (strcmp(operation, "BINDCHECK") == 0) {
+                send_check_result(zdkm_check_binding(index, position, &binding));
+                return true;
+            }
+            if (!auth_state(true, token)) {
+                send_line("ERR LOCKED");
+                return true;
+            }
             send_edit_result(zdkm_set_binding(index, position, &binding));
             return true;
         }

@@ -1,5 +1,5 @@
 import { fillKeycap, fullSizeKeys, keycodes, keycodeText } from "./keycodes.js?v=keyboard-palette";
-import { ConnectionError } from "./serial.js?v=behavior-operations";
+import { ConnectionError } from "./serial.js?v=settings-backup";
 
 const operationLabels = new Map([
   ["Next Profile", "次のプロファイルへ"],
@@ -121,6 +121,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   let encoderBindings = [];
   let position = null;
   let activeKeyParameter = null;
+  let usageSelect = null;
   let savedMapDraft = "";
   let mapSyncRequired = false;
   let slot = null;
@@ -293,6 +294,8 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function setConnection(capabilities, layout, count, encoderLayout = []) {
+    if (elements["usage-picker"].open) elements["usage-picker"].close();
+    usageSelect = null;
     features = capabilities;
     keys = layout;
     encoders = encoderLayout.map(item => ({ ...item, position: encoderPosition(item.encoder) }));
@@ -850,7 +853,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     refresh();
   }
 
-  function renderPalette() {
+  function drawKeyPalette(palette, extra, createKey, allowed = () => true) {
     const groups = fullSizeKeys(keyboardLayout);
     const shown = new Set();
     const caps = groups.map((group, index) => {
@@ -858,8 +861,9 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       block.className = "palette-block";
       block.style.setProperty("--columns", [60, 12, 16][index]);
       for (const { code, column, row, width, height } of group) {
+        if (!allowed(code)) continue;
         shown.add(code);
-        const entry = paletteKey(code);
+        const entry = createKey(code);
         entry.dataset.row = row;
         entry.style.gridArea = `${row} / ${column} / span ${height} / span ${width}`;
         entry.toggleAttribute("data-jis-enter", keyboardLayout === "jis" && index === 0 && height === 2);
@@ -867,8 +871,12 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       }
       return block;
     });
-    elements["map-palette"].replaceChildren(...caps);
-    elements["map-extra-keys"].replaceChildren(...keycodes.filter(code => !shown.has(code)).map(paletteKey));
+    palette.replaceChildren(...caps);
+    extra.replaceChildren(...keycodes.filter(code => !shown.has(code) && allowed(code)).map(createKey));
+  }
+
+  function renderPalette() {
+    drawKeyPalette(elements["map-palette"], elements["map-extra-keys"], paletteKey);
     elements["map-special-keys"].replaceChildren(...Array.from(specialKeys, ([name, code]) => {
       const entry = button("", () => {
         const id = specialBehavior(name);
@@ -880,8 +888,11 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       fillKeycap(entry, { legend: name, code });
       return entry;
     }));
-    elements["map-us"].setAttribute("aria-pressed", String(keyboardLayout === "us"));
-    elements["map-jis"].setAttribute("aria-pressed", String(keyboardLayout === "jis"));
+    for (const prefix of ["map", "usage"]) {
+      for (const layout of ["us", "jis"]) {
+        elements[`${prefix}-${layout}`].setAttribute("aria-pressed", String(keyboardLayout === layout));
+      }
+    }
     markPalette();
   }
 
@@ -907,7 +918,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function paletteKey(code) {
-    const entry = button("", () => {
+    return makePaletteKey(code, entry => {
       if (selectedEncoder()) elements["map-assignment"].open = true;
       if (!elements["map-assignment"].open || activeKeyParameter === null) {
         assignFromPalette(features.keyPress, [code, 0], entry);
@@ -918,11 +929,40 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
         showMapDraft();
       }
     });
+  }
+
+  function makePaletteKey(code, activate) {
+    const entry = button("", () => activate(entry));
     entry.classList.add("palette-key");
     entry.dataset.code = code;
     entry.title = keyOption(code);
     fillKeycap(entry, keyText(code));
     return entry;
+  }
+
+  function drawUsagePalette(select) {
+    const dialog = elements["usage-picker"];
+    drawKeyPalette(elements["usage-palette"], elements["usage-extra-keys"], code => {
+      const value = String(code - 0x070000);
+      const entry = makePaletteKey(code, () => {
+        dialog.close();
+        if (select.value === value) return;
+        select.value = value;
+        select.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      entry.setAttribute("aria-pressed", String(select.value === value));
+      return entry;
+    }, code => usageLabels.has(code - 0x070000));
+  }
+
+  function chooseUsage(title, select) {
+    const dialog = elements["usage-picker"];
+    if (dialog.open || select.disabled) return;
+    usageSelect = select;
+    elements["usage-picker-heading"].textContent = title;
+    drawUsagePalette(select);
+    dialog.querySelector(".palette-surface").scrollLeft = 0;
+    dialog.showModal();
   }
 
   function showMapDraft() {
@@ -940,6 +980,11 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       // A browser session can still use the selected layout.
     }
     renderPalette();
+    if (usageSelect && elements["usage-picker"].open) drawUsagePalette(usageSelect);
+    for (const field of elements["macro-steps"].querySelectorAll(".key-picker-field select")) {
+      setMacroKeyOptions(field, field.value);
+    }
+    if (macroRecords) drawMacroList();
     if (layers) drawPhysicalKeys();
     if (position !== null) {
       refreshBindingInputs();
@@ -971,6 +1016,14 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     return held.size ? null : steps.map(step => step.op * 65536 + step.value);
   }
 
+  function setMacroKeyOptions(select, selected) {
+    setDetailedOptions(select, [...usageLabels.keys()].map(code => {
+      const { legend, code: name } = keyText(0x070000 + code);
+      return detailedOption(legend, `&kp ${name}`, code);
+    }));
+    select.value = selected;
+  }
+
   function drawMacro() {
     elements["macro-steps"].replaceChildren(...(steps ?? []).map((step, index) => {
       const row = document.createElement("li");
@@ -997,17 +1050,22 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
         value.setAttribute("aria-label", `手順 ${index + 1} の待機時間 (ms)`);
       } else {
         value.setAttribute("aria-label", `手順 ${index + 1} のキー`);
-        setDetailedOptions(value, [...usageLabels.keys()].map(code => {
-          const { legend, code: name } = keyText(0x070000 + code);
-          return detailedOption(legend, `&kp ${name}`, code);
-        }));
+        setMacroKeyOptions(value, step.value);
       }
-      value.value = step.value;
       let field = value;
       if (step.op === 3) {
+        value.value = step.value;
         field = document.createElement("div");
         field.className = "macro-wait";
         field.append(value, "ms");
+      } else {
+        const title = `手順 ${index + 1} のキーを選ぶ`;
+        const choose = button("キーを選ぶ", () => chooseUsage(title, value));
+        choose.setAttribute("aria-label", title);
+        choose.setAttribute("aria-haspopup", "dialog");
+        field = document.createElement("div");
+        field.className = "key-picker-field";
+        field.append(value, choose);
       }
       value.addEventListener("input", () => {
         step.value = Number(value.value);
@@ -1041,11 +1099,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     refresh();
   }
 
-  function showMacro(requested) {
-    slot = requested;
-    const record = macroRecords.get(slot);
-    steps = slot === null ? null : record?.map(step => ({ ...step })) ?? [];
-    macroDirty = false;
+  function drawMacroList() {
     const available = [...macroRecords.keys()].sort((a, b) => a - b);
     elements["macro-list"].replaceChildren(...available.map(index => {
       const row = document.createElement("li");
@@ -1075,6 +1129,14 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     elements["macro-list-empty"].hidden = !!available.length;
     elements["macro-list-empty"].textContent = "保存済みマクロはありません。";
     elements["macro-capacity"].textContent = `${macroRecords.size} / ${features.macroSlots} 枠を使用中`;
+  }
+
+  function showMacro(requested) {
+    slot = requested;
+    const record = macroRecords.get(slot);
+    steps = slot === null ? null : record?.map(step => ({ ...step })) ?? [];
+    macroDirty = false;
+    drawMacroList();
     const creating = slot !== null && !macroRecords.has(slot);
     elements["macro-detail-heading"].textContent = slot === null ? "マクロの詳細" :
       creating ? `新しいマクロ · 枠 ${slot}` : `マクロ ${slot}`;
@@ -1163,8 +1225,14 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     markPalette();
     refresh();
   });
-  elements["map-us"].addEventListener("click", () => changeLayout("us"));
-  elements["map-jis"].addEventListener("click", () => changeLayout("jis"));
+  for (const prefix of ["map", "usage"]) {
+    for (const layout of ["us", "jis"]) {
+      elements[`${prefix}-${layout}`].addEventListener("click", () => changeLayout(layout));
+    }
+  }
+  elements["usage-picker"].addEventListener("close", () => {
+    if (!elements["usage-picker"].open) usageSelect = null;
+  });
   elements["map-parameters"].addEventListener("input", event => {
     if (!event.target.matches("[data-parameter], [data-key-modifier]")) return;
     markPalette();
@@ -1279,5 +1347,5 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
 
   renderPalette();
   updateMapSelection();
-  return { setConnection, refresh, loadPage, hasDraft };
+  return { setConnection, refresh, loadPage, hasDraft, chooseUsage };
 }
