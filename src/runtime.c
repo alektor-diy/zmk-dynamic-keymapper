@@ -2,13 +2,16 @@
 #include <string.h>
 
 #include <drivers/behavior.h>
+#include <dt-bindings/zmk/bt.h>
 #include <dt-bindings/zmk/hid_usage.h>
 #include <dt-bindings/zmk/hid_usage_pages.h>
+#include <dt-bindings/zmk/outputs.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/crc.h>
+#include <zmk/ble.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
 #include <zmk/hid.h>
@@ -50,6 +53,10 @@ enum {
 #define ACTION_BASE 0x100
 #define STOCK_ACTION_BASE 0x200
 #define MACRO_ACTION_BASE (STOCK_ACTION_BASE + ZDKM_MAX_COMBOS)
+#define BT_SELECT_BASE 0x400
+#define BT_DISCONNECT_BASE 0x500
+#define BT_COMMAND_BASE 0x600
+#define OUTPUT_COMMAND_BASE 0x610
 #define STOCK_ID_FLAG UINT32_C(0x80000000)
 
 struct combo_action {
@@ -256,8 +263,71 @@ bool zdkm_key_supported(uint32_t output) {
     return usage <= zdkm_keyboard_usage_limit() || (usage >= 0xe0 && usage <= 0xe7);
 }
 
+/* These action ids are stored in settings and shared by combos and macro taps. */
+unsigned int zdkm_bluetooth_profiles(void) {
+#if IS_ENABLED(CONFIG_ZMK_BLE) && DT_NODE_HAS_STATUS(DT_NODELABEL(bt), okay)
+    BUILD_ASSERT(ZMK_BLE_PROFILE_COUNT <= BT_DISCONNECT_BASE - BT_SELECT_BASE);
+    return ZMK_BLE_PROFILE_COUNT;
+#else
+    return 0;
+#endif
+}
+
+unsigned int zdkm_output_commands(void) {
+    if (!DT_NODE_HAS_STATUS(DT_NODELABEL(out), okay)) return 0;
+    unsigned int commands = BIT(OUT_TOG) | BIT(OUT_USB) | BIT(OUT_BLE);
+#ifdef OUT_NONE
+    commands |= BIT(OUT_NONE);
+#endif
+    return commands;
+}
+
+bool zdkm_is_bluetooth_action(uint32_t output) {
+    return (output >= BT_SELECT_BASE && output < BT_COMMAND_BASE) ||
+           output == BT_COMMAND_BASE + BT_NXT_CMD || output == BT_COMMAND_BASE + BT_PRV_CMD ||
+           output == BT_COMMAND_BASE + BT_CLR_CMD || output == BT_COMMAND_BASE + BT_CLR_ALL_CMD ||
+           (output >= OUTPUT_COMMAND_BASE && output <= OUTPUT_COMMAND_BASE + 3);
+}
+
+bool zdkm_bluetooth_binding(uint32_t output, struct zmk_behavior_binding *binding) {
+    if (!zdkm_is_bluetooth_action(output)) return false;
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(out), okay)
+    if (output >= OUTPUT_COMMAND_BASE) {
+        uint32_t command = output - OUTPUT_COMMAND_BASE;
+        if (!(zdkm_output_commands() & BIT(command))) return false;
+        *binding = (struct zmk_behavior_binding){
+            .behavior_dev = DEVICE_DT_NAME(DT_NODELABEL(out)), .param1 = command,
+        };
+        return true;
+    }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_BLE) && DT_NODE_HAS_STATUS(DT_NODELABEL(bt), okay)
+    if (output >= OUTPUT_COMMAND_BASE) return false;
+    uint32_t command = output - BT_COMMAND_BASE;
+    uint32_t profile = 0;
+    if (output < BT_COMMAND_BASE) {
+        bool select = output < BT_DISCONNECT_BASE;
+        command = select ? BT_SEL_CMD : BT_DISC_CMD;
+        profile = output - (select ? BT_SELECT_BASE : BT_DISCONNECT_BASE);
+        if (profile >= zdkm_bluetooth_profiles()) return false;
+    }
+    *binding = (struct zmk_behavior_binding){
+        .behavior_dev = DEVICE_DT_NAME(DT_NODELABEL(bt)), .param1 = command, .param2 = profile,
+    };
+    return true;
+#else
+    return false;
+#endif
+}
+
 static bool valid_output(uint32_t output) {
-    return zdkm_key_binding(output) || find_action(output);
+    return zdkm_key_binding(output) || find_action(output) || zdkm_is_bluetooth_action(output);
+}
+
+static bool supported_output(uint32_t output) {
+    struct zmk_behavior_binding binding;
+    if (zdkm_is_bluetooth_action(output)) return zdkm_bluetooth_binding(output, &binding);
+    return !zdkm_key_binding(output) || zdkm_key_supported(output);
 }
 
 bool zdkm_supports_extended_keys(void) {
@@ -380,7 +450,7 @@ static void merge_legacy_stock(struct zdkm_combo *table) {
 }
 
 static uint32_t decode_output(uint32_t output) {
-    if (zdkm_key_binding(output) || output < STOCK_ACTION_BASE ||
+    if (zdkm_key_binding(output) || zdkm_is_bluetooth_action(output) || output < STOCK_ACTION_BASE ||
         (output >= MACRO_ACTION_BASE && output < MACRO_ACTION_BASE + ZDKM_MACRO_SLOTS)) {
         return output;
     }
@@ -467,7 +537,7 @@ static void apply_table(struct k_work *work) {
         memcpy(active_table, saved_table, sizeof(active_table));
         for (size_t slot = 0; slot < SLOT_COUNT; ++slot) {
             uint32_t output = active_table[slot].output;
-            if (zdkm_key_binding(output) && !zdkm_key_supported(output)) active_table[slot].count = 0;
+            if (!supported_output(output)) active_table[slot].count = 0;
         }
         atomic_clear(&apply_pending);
     }
@@ -533,7 +603,7 @@ struct zdkm_combo zdkm_get_combo(size_t slot) {
 
 int zdkm_save(int slot, struct zdkm_combo combo) {
     if (slot < -1 || slot >= SLOT_COUNT || (combo.count && !valid_combo(&combo))) return -EINVAL;
-    if (combo.count && zdkm_key_binding(combo.output) && !zdkm_key_supported(combo.output)) {
+    if (combo.count && !supported_output(combo.output)) {
         return -ENOTSUP;
     }
 
@@ -582,7 +652,7 @@ static void invoke_output(uint8_t slot, int64_t timestamp, bool pressed) {
         .behavior_dev = DEVICE_DT_NAME(DT_NODELABEL(kp)),
         .param1 = zdkm_key_binding(output),
     };
-    if (!binding.param1) {
+    if (!binding.param1 && !zdkm_bluetooth_binding(output, &binding)) {
         const struct combo_action *action = find_action(output);
         if (!action) return;
         binding = action->binding;

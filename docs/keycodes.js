@@ -1,4 +1,5 @@
 import { keyboardExtras, consumerExtras } from "./extra-keycodes.js";
+import { isBluetoothAction } from "./bluetooth.js";
 
 const KEYBOARD_PAGE = 0x070000;
 const CONSUMER_PAGE = 0x0c0000;
@@ -87,6 +88,10 @@ export function validMacroSteps(steps) {
   for (const { op, value } of steps) {
     if (op === 3) {
       if (!Number.isInteger(value) || value < 1 || value > 5000) return false;
+      continue;
+    }
+    if (isBluetoothAction(value)) {
+      if (op !== 0 || held.size) return false;
       continue;
     }
     const key = unpackUsage(value);

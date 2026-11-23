@@ -722,6 +722,10 @@ static void process_command(char *cursor) {
         snprintk(response, sizeof(response), "OK KEYRANGES %u %u",
                  zdkm_keyboard_usage_limit(), zdkm_consumer_usage_limit());
         send_line(response);
+    } else if (strcmp(operation, "BTACTIONS") == 0) {
+        snprintk(response, sizeof(response), "OK BTACTIONS %u %u",
+                 zdkm_bluetooth_profiles(), zdkm_output_commands());
+        send_line(response);
     } else if (strcmp(operation, "ARM") == 0) {
         arm_auth(NULL);
         send_line("OK ARMED");
