@@ -145,6 +145,34 @@ export function keycodeText(code, layout) {
 
 export const keycodes = [...dictionary.keys()];
 
+const extraKeyGroups = [
+  ["ファンクション", name => /^F\d+$/.test(name)],
+  ["テンキー", (name, usage) => name.startsWith("KP_") || usage === 0x07008c],
+  ["言語・文字入力", name => /^(INT\d|LANG\d|C_(AC_NEXT_KEYBOARD_LAYOUT|AL_KEYBOARD_LAYOUT|KEYBOARD_INPUT_ASSIST))/.test(name)],
+  ["英数字・記号", (_, usage) => (usage >= 0x070004 && usage <= 0x070027) ||
+    (usage >= 0x07002d && usage <= 0x070038) || usage === 0x070064],
+  ["基本操作・修飾", (_, usage) => (usage >= 0x070028 && usage <= 0x07002c) ||
+    (usage >= 0x070046 && usage <= 0x070052) || (usage >= 0x0700e0 && usage <= 0x0700e7) ||
+    usage === 0x070039 || usage === 0x070065],
+  ["音量・メディア再生", name => /^C_(VOL|MUTE|PLAY|PAUSE|RECORD|FAST_FORWARD|REWIND|NEXT|PREVIOUS|STOP|EJECT|RANDOM|REPEAT|SLOW|BASS|ALTERNATE_AUDIO)|^K_(VOL|MUTE|PLAY|NEXT|PREVIOUS|STOP2|EJECT)/.test(name)],
+  ["画面・電源", name => /^(C|K)_(BRIGHTNESS|BACKLIGHT|POWER|RESET|SLEEP|LOCK|AL_LOCK|AL_LOGOFF|AL_SCREEN_SAVER)/.test(name)],
+  ["ブラウザー・ナビゲーション", name => /^(C_AC_(SEARCH|GOTO|HOME|BACK|FORWARD|STOP|REFRESH|BOOKMARKS|ZOOM|SCROLL)|K_(WWW|BACK|FORWARD|STOP3|REFRESH|SCROLL))/.test(name)],
+  ["アプリ起動・切り替え", name => /^(C_AL_|C_AC_DESKTOP_|K_CALCULATOR|C_VOICE_COMMAND)/.test(name)],
+  ["編集・操作", name => /^(C_AC_|K_(EXECUTE|SELECT|STOP|AGAIN|UNDO|CUT|COPY|PASTE|FIND|EDIT|CANCEL|HELP)|ALT_ERASE|CLEAR|RETURN2)/.test(name)],
+  ["テレビ・入力ソース", name => /^C_(MEDIA|MENU|CHANNEL|RECALL|DATA_ON_SCREEN|CAPTIONS|SNAPSHOT|PIP|ASPECT|RED_BUTTON|GREEN_BUTTON|BLUE_BUTTON|YELLOW_BUTTON)/.test(name)],
+  ["その他", () => true],
+];
+
+export function groupExtraKeys(codes) {
+  const groups = extraKeyGroups.map(([name]) => ({ name, codes: [] }));
+  for (const code of codes) {
+    const name = dictionary.get(code).name;
+    const index = extraKeyGroups.findIndex(([, matches]) => matches(name, code));
+    groups[index].codes.push(code);
+  }
+  return groups.filter(group => group.codes.length);
+}
+
 const digits = [0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27];
 const letters = row => [...row].map(letter => letter.charCodeAt(0) - 61);
 const functionRow = [0x29, [0, 1], 0x3a, 0x3b, 0x3c, 0x3d, [0, .5], 0x3e, 0x3f, 0x40, 0x41,

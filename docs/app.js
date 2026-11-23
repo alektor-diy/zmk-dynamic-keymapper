@@ -1,6 +1,6 @@
 import { ConnectionError, SerialDevice, delay, supportsUsage } from "./serial.js?v=full-keys";
-import { setupEditors } from "./editors.js?v=full-keys";
-import { fillKeycap, keycodes, keycodeText, packUsage, setUsageValue, unpackUsage } from "./keycodes.js?v=full-keys";
+import { setupEditors } from "./editors.js?v=key-groups";
+import { fillKeycap, keycodes, keycodeText, packUsage, setUsageValue, unpackUsage } from "./keycodes.js?v=key-groups";
 import { DemoDevice } from "./demo.js?v=full-keys";
 import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=full-keys";
 

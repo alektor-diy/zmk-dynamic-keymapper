@@ -1,5 +1,5 @@
 import { fillKeycap, fullSizeKeys, keycodes, keycodeText, packUsage, unpackUsage,
-  encodeMacroStep, validMacroSteps, setUsageValue } from "./keycodes.js?v=full-keys";
+  encodeMacroStep, validMacroSteps, setUsageValue, groupExtraKeys } from "./keycodes.js?v=key-groups";
 import { ConnectionError, supportsUsage } from "./serial.js?v=full-keys";
 
 const operationLabels = new Map([
@@ -856,7 +856,22 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     refresh();
   }
 
-  function drawKeyPalette(palette, extra, createKey, allowed = () => true) {
+  function drawExtraKeys(container, codes, createKey) {
+    container.replaceChildren(...groupExtraKeys(codes).map(({ name, codes }, index) => {
+      const section = document.createElement("section");
+      const heading = document.createElement("h3");
+      heading.id = `${container.id}-group-${index}`;
+      heading.textContent = name;
+      section.setAttribute("aria-labelledby", heading.id);
+      const keys = document.createElement("div");
+      keys.className = "extra-key-row";
+      keys.append(...codes.map(createKey));
+      section.append(heading, keys);
+      return section;
+    }));
+  }
+
+  function drawKeyPalette(palette, extra, createKey) {
     const groups = fullSizeKeys(keyboardLayout);
     const shown = new Set();
     const caps = groups.map((group, index) => {
@@ -864,7 +879,6 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       block.className = "palette-block";
       block.style.setProperty("--columns", [60, 12, 16][index]);
       for (const { code, column, row, width, height } of group) {
-        if (!allowed(code)) continue;
         shown.add(code);
         const entry = createKey(code);
         entry.dataset.row = row;
@@ -875,7 +889,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       return block;
     });
     palette.replaceChildren(...caps);
-    extra.replaceChildren(...keycodes.filter(code => !shown.has(code) && allowed(code)).map(createKey));
+    drawExtraKeys(extra, keycodes.filter(code => !shown.has(code)), createKey);
   }
 
   function renderPalette() {
@@ -969,7 +983,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
         const { legend, code: name } = keyText(code);
         return [legend, name, `0x${(code & 0xffff).toString(16)}`].some(text => normalizeQuery(text).includes(query));
       });
-      extras.replaceChildren(...matches.map(createKey));
+      drawExtraKeys(extras, matches, createKey);
     } else {
       drawKeyPalette(palette, extras, createKey);
     }
@@ -988,8 +1002,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     modifiers.hidden = !keyCaps?.keyRanges;
     modifiers.replaceChildren(...(modifiers.hidden ? [] : [makeKeyModifiers(unpackUsage(Number(select.value)) >>> 24)]));
     drawUsagePalette(select);
-    dialog.querySelector(".palette-surface").scrollLeft = 0;
     dialog.showModal();
+    elements["usage-picker-heading"].focus({ preventScroll: true });
+    dialog.scrollTop = 0;
+    dialog.querySelector(".palette-surface").scrollLeft = 0;
   }
 
   function showMapDraft() {
