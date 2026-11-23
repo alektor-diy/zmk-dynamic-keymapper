@@ -1,5 +1,6 @@
-import { delay, isUsage, supportsUsage } from "./serial.js?v=full-keys";
-import { decodeMacroStep, encodeMacroStep, validMacroSteps } from "./keycodes.js?v=full-keys";
+import { delay, isUsage, supportsUsage } from "./serial.js?v=bt-actions";
+import { decodeMacroStep, encodeMacroStep, validMacroSteps } from "./keycodes.js?v=bt-actions";
+import { isBluetoothAction } from "./bluetooth.js";
 
 const format = "zmk-dynamic-keymapper";
 const version = 1;
@@ -81,7 +82,8 @@ export async function captureBackup(device, context, progress) {
     ]),
   };
   return { format, version, compatibility, extendedKeys: Boolean(caps.extendedKeys),
-    keyRanges: caps.keyRanges ?? null, settings: { keymap, combos, macros } };
+    keyRanges: caps.keyRanges ?? null, bluetoothActions: [...(caps.bluetooth?.keys() ?? [])],
+    settings: { keymap, combos, macros } };
 }
 
 function validateMacro(steps, limit) {
@@ -100,7 +102,8 @@ function planCombos(before, after, compatibility, keyCaps) {
   const desired = new Map();
   for (const combo of after) {
     const { slot, output, timeout, idle, layers, slow, positions } = combo ?? {};
-    if (!integer(slot, 0, slots - 1) || desired.has(slot) || !(isUsage(output) || outputs.has(output)) ||
+    if (!integer(slot, 0, slots - 1) || desired.has(slot) ||
+        !(isUsage(output) || outputs.has(output) || isBluetoothAction(output)) ||
         !integer(timeout, 1, 65535) || !integer(idle, 0, 65535) ||
         !integer(layers, 0, 2 ** layerCount - 1) || !integer(slow, 0, 1) ||
         !Array.isArray(positions) || positions.length < 2 || positions.length > maxKeys ||
@@ -120,8 +123,9 @@ function planCombos(before, after, compatibility, keyCaps) {
   for (const [slot, combo] of desired) {
     const old = current.get(slot);
     if (same(old, combo)) continue;
-    if (!outputs.has(combo.output) && !supportsUsage(combo.output, keyCaps)) {
-      throw new Error(`コンボ ${slot} の出力キーは、このファームウェアの HID 設定では使えません。`);
+    if (!outputs.has(combo.output) && !keyCaps.bluetoothActions?.includes(combo.output) &&
+        !supportsUsage(combo.output, keyCaps)) {
+      throw new Error(`コンボ ${slot} の出力は、このファームウェアでは使えません。`);
     }
     if (!sameChord(old, combo) && [...desired].some(([otherSlot, other]) =>
       otherSlot !== slot && same(combo.positions, other.positions) &&
@@ -153,8 +157,9 @@ export function planRestore(current, desired) {
   for (const [slot, steps] of macros.entries()) {
     if (!validateMacro(steps, compatibility.macroLimits[1])) throw new Error(`マクロ ${slot} が無効です。`);
     if (same(steps, current.settings.macros[slot])) continue;
-    if (steps.map(decodeMacroStep).some(({ op, value }) => op !== 3 && !supportsUsage(value, current))) {
-      throw new Error(`マクロ ${slot} に、このファームウェアの HID 設定では使えないキーがあります。`);
+    if (steps.map(decodeMacroStep).some(({ op, value }) =>
+      op !== 3 && !current.bluetoothActions?.includes(value) && !supportsUsage(value, current))) {
+      throw new Error(`マクロ ${slot} に、このファームウェアで使えないキーまたは動作があります。`);
     }
     (steps.length ? changes : clearMacros).push({
       command: ["MACROSET", slot, steps.length, ...steps].join(" "), label: `マクロ ${slot}`,

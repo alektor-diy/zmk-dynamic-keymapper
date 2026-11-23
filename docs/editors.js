@@ -1,6 +1,7 @@
 import { fillKeycap, fullSizeKeys, keycodes, keycodeText, packUsage, unpackUsage,
-  encodeMacroStep, validMacroSteps, setUsageValue, groupExtraKeys } from "./keycodes.js?v=key-groups";
-import { ConnectionError, supportsUsage } from "./serial.js?v=full-keys";
+  encodeMacroStep, validMacroSteps, setUsageValue, groupExtraKeys } from "./keycodes.js?v=bt-actions";
+import { ConnectionError, supportsUsage } from "./serial.js?v=bt-actions";
+import { bluetoothActionLabel, isBluetoothAction } from "./bluetooth.js";
 
 const operationLabels = new Map([
   ["Next Profile", "次のプロファイルへ"],
@@ -123,6 +124,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   let position = null;
   let activeKeyParameter = null;
   let usageSelect = null;
+  let usageBluetooth = true;
   let keyCaps = null;
   let savedMapDraft = "";
   let mapSyncRequired = false;
@@ -261,8 +263,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     const canPick = position !== null && ((encoder || detail) && activeKeyParameter !== null ||
       behaviors.get(features?.keyPress)?.editable);
     for (const key of elements["map-form"].querySelectorAll(".palette-key")) {
-      const available = key.dataset.special ? !encoder && position !== null &&
-        specialBehavior(key.dataset.special) !== undefined : canPick;
+      let available = canPick;
+      if (key.hasAttribute("data-bt-binding")) available = !encoder && position !== null;
+      if (key.dataset.special) available = !encoder && position !== null &&
+        specialBehavior(key.dataset.special) !== undefined;
       key.disabled = !enabled || mapSyncRequired || !available;
     }
     const operationIncomplete = [...elements["map-parameters"].querySelectorAll("[data-operation-field]")]
@@ -306,6 +310,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     layerCount = count;
     layers = null;
     behaviors.clear();
+    renderBluetoothOperations();
     layer = null;
     position = null;
     activeKeyParameter = null;
@@ -401,7 +406,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     }
     if (attached !== state().device) return;
     layers = available;
-    behaviors = catalog;
+    if (behaviors !== catalog) {
+      behaviors = catalog;
+      renderBluetoothOperations();
+    }
     const encoder = selectedEncoder();
     if (layer !== selected || (encoder && !rotations[encoder.encoder])) {
       if (encoder) elements["map-assignment"].open = false;
@@ -759,10 +767,17 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     const code = detail && parameter ? parameterValue(parameter) :
       binding?.id === features?.keyPress ? String(binding?.parameters[0]) : undefined;
     const behavior = detail ? elements["map-behavior"].value : binding?.id;
+    const parameters = detail ? Array.from(elements["map-parameters"].querySelectorAll("[data-operation-field]"),
+      field => field.value) : binding?.parameters ?? [];
+    const btBinding = [behavior, parameters[0], parameters[1] ?? 0].join(",");
     for (const entry of elements["map-form"].querySelectorAll(".palette-key")) {
       const special = entry.dataset.special;
-      const id = special ? specialBehavior(special) : undefined;
-      const selected = special ? id !== undefined && String(id) === String(behavior) : entry.dataset.code === code;
+      let selected = entry.dataset.code === code;
+      if (entry.hasAttribute("data-bt-binding")) selected = entry.dataset.btBinding === btBinding;
+      if (special) {
+        const id = specialBehavior(special);
+        selected = id !== undefined && String(id) === String(behavior);
+      }
       entry.setAttribute("aria-pressed", String(position !== null && selected));
     }
   }
@@ -856,19 +871,29 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     refresh();
   }
 
+  function extraKeySection(headingId, name, entries) {
+    const section = document.createElement("section");
+    section.dataset.keyGroup = name;
+    const heading = document.createElement("h3");
+    heading.id = headingId;
+    heading.textContent = name;
+    section.setAttribute("aria-labelledby", heading.id);
+    const keys = document.createElement("div");
+    keys.className = "extra-key-row";
+    keys.append(...entries);
+    section.append(heading, keys);
+    return section;
+  }
+
   function drawExtraKeys(container, codes, createKey) {
-    container.replaceChildren(...groupExtraKeys(codes).map(({ name, codes }, index) => {
-      const section = document.createElement("section");
-      const heading = document.createElement("h3");
-      heading.id = `${container.id}-group-${index}`;
-      heading.textContent = name;
-      section.setAttribute("aria-labelledby", heading.id);
-      const keys = document.createElement("div");
-      keys.className = "extra-key-row";
-      keys.append(...codes.map(createKey));
-      section.append(heading, keys);
-      return section;
-    }));
+    container.replaceChildren(...groupExtraKeys(codes).map(({ name, codes }, index) =>
+      extraKeySection(`${container.id}-group-${index}`, name, codes.map(createKey))));
+  }
+
+  function insertBluetoothSection(container, entries) {
+    if (!entries.length) return;
+    const section = extraKeySection(`${container.id}-bluetooth-heading`, "Bluetooth", entries);
+    container.insertBefore(section, container.querySelector('[data-key-group="言語・文字入力"]'));
   }
 
   function drawKeyPalette(palette, extra, createKey) {
@@ -894,6 +919,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
 
   function renderPalette() {
     drawKeyPalette(elements["map-palette"], elements["map-extra-keys"], paletteKey);
+    renderBluetoothOperations();
     elements["map-special-keys"].replaceChildren(...Array.from(specialKeys, ([name, code]) => {
       const entry = button("", () => {
         const id = specialBehavior(name);
@@ -920,6 +946,32 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       if (behavior.editable && behavior.parameters.every(kind => !kind) &&
           [token, code].includes(behavior.name.trim().toLowerCase().replace(/^&/, ""))) return id;
     }
+  }
+
+  function renderBluetoothOperations() {
+    const container = elements["map-extra-keys"];
+    container.querySelector('[data-key-group="Bluetooth"]')?.remove();
+    const entries = ["Bluetooth", "Output Selection"].flatMap(name => {
+      const [id, behavior] = [...behaviors].find(([, item]) => item.editable && item.name === name) ?? [];
+      const operations = behavior?.operations ?? [];
+      const ordered = [...operations.filter(item => item.name === "Select Profile"),
+        ...operations.filter(item => item.name !== "Select Profile")];
+      return ordered.flatMap(operation => Array.from({ length: operation.profileCount || 1 }, (_, profile) => {
+        const params = [operation.value, profile];
+        const profileLabel = `BT${profile + 1}`;
+        const description = operation.profileCount ? `${operationLabel(operation)} ${profile + 1}` : operationLabel(operation);
+        let legend = description;
+        if (operation.name === "Select Profile") legend = profileLabel;
+        if (operation.name === "Disconnect Profile") legend = `${profileLabel} を切断`;
+        const entry = button("", () => assignFromPalette(id, params, entry));
+        entry.classList.add("palette-key");
+        entry.dataset.btBinding = [id, ...params].join(",");
+        entry.title = description;
+        fillKeycap(entry, { legend });
+        return entry;
+      }));
+    });
+    insertBluetoothSection(container, entries);
   }
 
   function assignFromPalette(id, params, entry) {
@@ -987,15 +1039,33 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     } else {
       drawKeyPalette(palette, extras, createKey);
     }
+    if (usageBluetooth) {
+      const entries = [];
+      for (const [value, legend] of keyCaps?.bluetooth ?? []) {
+        if (query && ![legend, "Bluetooth"].some(text => normalizeQuery(text).includes(query))) continue;
+        const entry = button("", () => {
+          dialog.close();
+          if (Number(select.value) === value) return;
+          setUsageValue(select, value, legend, true);
+          select.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        entry.classList.add("palette-key");
+        entry.setAttribute("aria-pressed", String(Number(select.value) === value));
+        fillKeycap(entry, { legend });
+        entries.push(entry);
+      }
+      insertBluetoothSection(extras, entries);
+    }
     elements["usage-no-results"].hidden = !query || extras.childElementCount > 0;
     elements["usage-picker-limit"].hidden = !(extras.querySelector(".palette-key:disabled") ||
       (!query && dialog.querySelector("#usage-palette .palette-key:disabled")));
   }
 
-  function chooseUsage(title, select) {
+  function chooseUsage(title, select, allowBluetooth = true) {
     const dialog = elements["usage-picker"];
     if (dialog.open || select.disabled) return;
     usageSelect = select;
+    usageBluetooth = allowBluetooth;
     elements["usage-picker-heading"].textContent = title;
     elements["usage-search"].value = "";
     const modifiers = elements["usage-modifiers"];
@@ -1045,15 +1115,19 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     return validMacroSteps(steps) ? steps.map(encodeMacroStep) : null;
   }
 
-  function setMacroKeyOptions(select, selected) {
+  function setMacroKeyOptions(select, selected, allowBluetooth) {
     setDetailedOptions(select, [...usageLabels.keys()].map(code => {
       const { legend, code: name } = keyText(unpackUsage(code));
       const option = detailedOption(legend, `&kp ${name}`, code);
       option.disabled = !supportsUsage(code, keyCaps);
       return option;
     }));
+    if (allowBluetooth) {
+      for (const [value, legend] of keyCaps?.bluetooth ?? []) select.add(new Option(legend, value));
+    }
     const value = Number(selected);
-    setUsageValue(select, value, keyOption(unpackUsage(value)), supportsUsage(value, keyCaps));
+    setUsageValue(select, value, bluetoothActionLabel(value) ?? keyOption(unpackUsage(value)),
+      Boolean(allowBluetooth && keyCaps?.bluetooth?.has(value)) || supportsUsage(value, keyCaps));
   }
 
   function drawMacro() {
@@ -1068,6 +1142,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       op.addEventListener("change", () => {
         const next = Number(op.value);
         if ((step.op === 3) !== (next === 3)) step.value = next === 3 ? 100 : 4;
+        else if (next !== 0 && isBluetoothAction(step.value)) step.value = 4;
         step.op = next;
         macroDirty = true;
         drawMacro();
@@ -1082,7 +1157,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
         value.setAttribute("aria-label", `手順 ${index + 1} の待機時間 (ms)`);
       } else {
         value.setAttribute("aria-label", `手順 ${index + 1} のキー`);
-        setMacroKeyOptions(value, step.value);
+        setMacroKeyOptions(value, step.value, step.op === 0);
       }
       let field = value;
       if (step.op === 3) {
@@ -1092,7 +1167,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
         field.append(value, "ms");
       } else {
         const title = `手順 ${index + 1} のキーを選ぶ`;
-        const choose = button("キーを選ぶ", () => chooseUsage(title, value));
+        const choose = button("キーを選ぶ", () => chooseUsage(title, value, step.op === 0));
         choose.setAttribute("aria-label", title);
         choose.setAttribute("aria-haspopup", "dialog");
         field = document.createElement("div");
@@ -1149,7 +1224,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       const summary = document.createElement("span");
       summary.textContent = stored ? stored.slice(0, 3).map(step =>
         step.op === 3 ? `${step.value} ms 待つ` :
-          `${keyOption(unpackUsage(step.value))} を${MACRO_OPERATIONS[step.op]}`
+          bluetoothActionLabel(step.value) ?? `${keyOption(unpackUsage(step.value))} を${MACRO_OPERATIONS[step.op]}`
       ).join(" → ") + (stored.length > 3 ? " …" : "") : "手順を読み込めません";
       const count = document.createElement("span");
       if (stored) count.textContent = `${stored.length} 手順`;
@@ -1283,6 +1358,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     const operation = field.value === "" ? undefined : operations.find(entry => entry.value === Number(field.value));
     elements["map-parameters"].querySelector('[data-parameter="1"]')?.parentElement.remove();
     elements["map-parameters"].append(...profilePicker(operation));
+    markPalette();
     showMapDraft();
   });
   elements["map-form"].addEventListener("submit", event => {
@@ -1358,13 +1434,13 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   elements["macro-form"].addEventListener("submit", event => {
     event.preventDefault();
     if (!editable() || macroSyncRequired || !steps?.length || !macroDirty) return;
-    if (steps.some(({ op, value }) => op !== 3 && !supportsUsage(value, keyCaps))) {
-      result("macro", "このファームウェアの HID 設定では、マクロに含まれるキーを使えません。", "error");
+    if (steps.some(({ op, value }) => op !== 3 && !keyCaps?.bluetooth?.has(value) && !supportsUsage(value, keyCaps))) {
+      result("macro", "このファームウェアで使えないキーまたは動作がマクロに含まれています。", "error");
       return;
     }
     const draft = currentDraft();
     if (!draft) {
-      result("macro", "「押す」と「離す」をキーごとに対応させ、待機時間を 1〜5000 ms にしてください。", "error");
+      result("macro", "「押す」と「離す」をキーごとに対応させ、待機時間を 1〜5000 ms にしてください。Bluetooth 操作の前にはすべてのキーを離してください。", "error");
       return;
     }
     const target = slot;

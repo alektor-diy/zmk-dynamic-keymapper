@@ -3,6 +3,8 @@
 
 #include <zdkm/combo.h>
 
+struct zmk_behavior_binding;
+
 enum zdkm_status {
     ZDKM_LOADING,
     ZDKM_ACTIVE,
@@ -27,6 +29,10 @@ uint16_t zdkm_keyboard_usage_limit(void);
 uint16_t zdkm_consumer_usage_limit(void);
 uint32_t zdkm_key_binding(uint32_t output);
 bool zdkm_key_supported(uint32_t output);
+unsigned int zdkm_bluetooth_profiles(void);
+unsigned int zdkm_output_commands(void);
+bool zdkm_is_bluetooth_action(uint32_t output);
+bool zdkm_bluetooth_binding(uint32_t output, struct zmk_behavior_binding *binding);
 
 #define ZDKM_PACKED_KEY UINT32_C(0x10000000)
 #define ZDKM_KEY_PAYLOAD UINT32_C(0x3fffffff)

@@ -45,6 +45,13 @@ static bool valid(const struct zdkm_macro *macro, bool check_support) {
             if (value < 1 || value > ZDKM_MACRO_MAX_WAIT) return false;
             continue;
         }
+        if (zdkm_is_bluetooth_action(value)) {
+            struct zmk_behavior_binding binding;
+            /* Release held HID keys before changing their destination. */
+            if (op != ZDKM_MACRO_TAP || held ||
+                (check_support && !zdkm_bluetooth_binding(value, &binding))) return false;
+            continue;
+        }
         uint32_t binding = zdkm_key_binding(value);
         if (!binding || (check_support && !zdkm_key_supported(value))) return false;
         size_t index = 0;
@@ -155,8 +162,10 @@ static void play_step(struct k_work *work) {
             .param1 = zdkm_key_binding(value),
         };
         trigger.timestamp = k_uptime_get();
-        int err = zmk_behavior_invoke_binding(&binding, trigger, op != ZDKM_MACRO_RELEASE && !release_tap);
-        if (err < 0) LOG_ERR("ZDKM macro key step failed: %d", err);
+        if (binding.param1 || zdkm_bluetooth_binding(value, &binding)) {
+            int err = zmk_behavior_invoke_binding(&binding, trigger, op != ZDKM_MACRO_RELEASE && !release_tap);
+            if (err < 0) LOG_ERR("ZDKM macro step failed: %d", err);
+        }
     }
     if (op == ZDKM_MACRO_TAP) release_tap = !release_tap;
     if (!release_tap) ++next_step;

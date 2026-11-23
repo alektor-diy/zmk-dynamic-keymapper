@@ -1,8 +1,9 @@
-import { ConnectionError, SerialDevice, delay, supportsUsage } from "./serial.js?v=full-keys";
-import { setupEditors } from "./editors.js?v=key-groups";
-import { fillKeycap, keycodes, keycodeText, packUsage, setUsageValue, unpackUsage } from "./keycodes.js?v=key-groups";
-import { DemoDevice } from "./demo.js?v=full-keys";
-import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=full-keys";
+import { ConnectionError, SerialDevice, delay, supportsUsage } from "./serial.js?v=bt-actions";
+import { setupEditors } from "./editors.js?v=bt-actions";
+import { fillKeycap, keycodes, keycodeText, packUsage, setUsageValue, unpackUsage } from "./keycodes.js?v=bt-actions";
+import { DemoDevice } from "./demo.js?v=bt-actions";
+import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=bt-actions";
+import { bluetoothActionLabel } from "./bluetooth.js";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
@@ -32,9 +33,9 @@ for (const code of keycodes) {
   if (!usageLabels.has(value)) usageLabels.set(value, keycodeText(code, "us").legend);
 }
 
-const usageLabel = output => caps?.actions.get(output) ?? usageLabels.get(output) ??
+const usageLabel = output => caps?.actions.get(output) ?? bluetoothActionLabel(output) ?? usageLabels.get(output) ??
   keycodeText(unpackUsage(output) || output, "us").code;
-const outputSupported = output => caps?.actions.has(output) || supportsUsage(output, caps);
+const outputSupported = output => caps?.actions.has(output) || caps?.bluetooth?.has(output) || supportsUsage(output, caps);
 function setOutputOptions() {
   elements.usage.replaceChildren(new Option("出力する動作を選択", ""));
   for (const [usage, label] of usageLabels) {
@@ -43,6 +44,7 @@ function setOutputOptions() {
     elements.usage.add(option);
   }
   for (const [output, name] of caps?.actions ?? []) elements.usage.add(new Option(name, output));
+  for (const [output, name] of caps?.bluetooth ?? []) elements.usage.add(new Option(name, output));
 }
 
 let device = null;

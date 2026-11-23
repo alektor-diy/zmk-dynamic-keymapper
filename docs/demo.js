@@ -1,4 +1,5 @@
-import { decodeMacroStep } from "./keycodes.js?v=full-keys";
+import { decodeMacroStep } from "./keycodes.js?v=bt-actions";
+import { bluetoothActions } from "./bluetooth.js";
 
 const KEY_PRESS = 1;
 const MACRO = 2;
@@ -67,6 +68,7 @@ export class DemoDevice {
     return {
       legacy: false, maxKeys: 20, layerCount: this.names.length, extendedKeys: true, keyRanges: [0xff, 0xfff],
       actions: new Map([[576, "ZDKM マクロ 0"], [577, "ZDKM マクロ 1"]]),
+      bluetooth: bluetoothActions(5, 0b111),
     };
   }
 

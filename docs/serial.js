@@ -1,4 +1,5 @@
-import { decodeMacroStep, unpackUsage } from "./keycodes.js?v=full-keys";
+import { decodeMacroStep, unpackUsage } from "./keycodes.js?v=bt-actions";
+import { bluetoothActions, isBluetoothAction } from "./bluetooth.js";
 
 export class ConnectionError extends Error {}
 class ProtocolError extends Error {
@@ -173,7 +174,14 @@ export class SerialDevice {
     } catch (error) {
       if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
     }
-    return { legacy: false, maxKeys, layerCount, actions, extendedKeys, keyRanges };
+    let bluetooth = new Map();
+    try {
+      const { values: [profiles, outputs] } = await this.request("BTACTIONS", ["BTACTIONS"], 2);
+      bluetooth = bluetoothActions(integer(profiles, 0, 256), integer(outputs, 0, 15));
+    } catch (error) {
+      if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
+    }
+    return { legacy: false, maxKeys, layerCount, actions, extendedKeys, keyRanges, bluetooth };
   }
 
   async editorCapabilities() {
@@ -293,7 +301,7 @@ export class SerialDevice {
     if (integer(count, 0, limit) !== items.length) throw new ConnectionError("無効なマクロを受信しました。");
     return items.map(item => {
       const { op, value } = decodeMacroStep(integer(item, 0, 0xffffffff));
-      if (op > 3 || (op === 3 ? value < 1 || value > 5000 : !isUsage(value))) {
+      if (op > 3 || (op === 3 ? value < 1 || value > 5000 : !isUsage(value) && !(op === 0 && isBluetoothAction(value)))) {
         throw new ConnectionError("無効なマクロ操作を受信しました。");
       }
       return { op, value };
@@ -342,7 +350,7 @@ export class SerialDevice {
         if (count) record = { output, timeout, idle, layers, slow, positions };
       }
       if (!record) continue;
-      if ((!isUsage(record.output) && !caps.actions.has(record.output)) ||
+      if ((!isUsage(record.output) && !caps.actions.has(record.output) && !isBluetoothAction(record.output)) ||
           record.positions.some((position, i, all) => position >= info.count || (i > 0 && position <= all[i - 1]))) {
         throw new ConnectionError("無効なコンボ設定を受信しました。");
       }
