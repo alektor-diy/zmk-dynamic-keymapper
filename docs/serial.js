@@ -1,3 +1,5 @@
+import { decodeMacroStep, unpackUsage } from "./keycodes.js?v=full-keys";
+
 export class ConnectionError extends Error {}
 class ProtocolError extends Error {
   constructor(code) {
@@ -10,6 +12,7 @@ const RESPONSE_ERRORS = {
   FRAME: "機器が通信データを読み取れませんでした。",
   LOCKED: "書き込み許可が切れました。もう一度保存してください。",
   INVALID: "キー位置または出力キーを確認してください。",
+  KEY_USAGE: "このファームウェアの HID 設定では、このキーを使えません。",
   DUPLICATE: "同じ組み合わせのコンボがすでにあります。",
   BUSY: "キーボードが設定を処理中です。すべてのキーを離して再読み込みしてください。",
   RESET_REQUIRED: "保存済みの設定を読み込めません。コンボ設定の初期化が必要です。",
@@ -35,8 +38,23 @@ function integer(value, minimum, maximum) {
 }
 
 export function isUsage(usage) {
-  return Number.isInteger(usage) && ((usage >= 0x04 && usage <= 0x65) ||
-    (usage >= 0xe0 && usage <= 0xe7));
+  return Boolean(unpackUsage(usage));
+}
+
+export function isExtendedUsage(usage) {
+  return (usage >= 0x68 && usage <= 0x73) || (usage >= 0x87 && usage <= 0x8b);
+}
+
+export function supportsUsage(value, caps) {
+  const key = unpackUsage(value);
+  if (!key) return false;
+  if (!caps?.keyRanges) {
+    return (value >= 4 && value <= 0x65) || (value >= 0xe0 && value <= 0xe7) ||
+      Boolean(caps?.extendedKeys && isExtendedUsage(value));
+  }
+  const usage = key & 0xffff;
+  if ((key & 0xff0000) === 0x0c0000) return usage <= caps.keyRanges[1];
+  return usage <= caps.keyRanges[0] || (usage >= 0xe0 && usage <= 0xe7);
 }
 
 export class SerialDevice {
@@ -96,12 +114,12 @@ export class SerialDevice {
   async readLine() {
     for (;;) {
       const end = this.buffer.indexOf("\n");
-      if (end >= 0 && end <= 160) {
+      if (end >= 0 && end <= 224) {
         const line = this.buffer.slice(0, end).trim();
         this.buffer = this.buffer.slice(end + 1);
         return line;
       }
-      if (this.buffer.length > 160) throw new ConnectionError("USB から長すぎる応答を受信しました。");
+      if (this.buffer.length > 224) throw new ConnectionError("USB から長すぎる応答を受信しました。");
       const { value, done } = await this.reader.read();
       if (done) throw new ConnectionError("USB 接続が終了しました。");
       this.buffer += this.decoder.decode(value, { stream: true });
@@ -141,7 +159,21 @@ export class SerialDevice {
       if (!label.length || actions.has(id)) throw new ConnectionError("無効な Behavior 一覧を受信しました。");
       actions.set(id, label.join(" "));
     }
-    return { legacy: false, maxKeys, layerCount, actions };
+    let extendedKeys = false;
+    try {
+      const { values: [supported] } = await this.request("EXTKEYS", ["EXTKEYS"], 1);
+      extendedKeys = Boolean(integer(supported, 0, 1));
+    } catch (error) {
+      if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
+    }
+    let keyRanges = null;
+    try {
+      const { values: [keyboard, consumer] } = await this.request("KEYRANGES", ["KEYRANGES"], 2);
+      keyRanges = [integer(keyboard, 0x65, 0xff), integer(consumer, 1, 0xfff)];
+    } catch (error) {
+      if (!(error instanceof ProtocolError && error.code === "UNKNOWN")) throw error;
+    }
+    return { legacy: false, maxKeys, layerCount, actions, extendedKeys, keyRanges };
   }
 
   async editorCapabilities() {
@@ -260,10 +292,8 @@ export class SerialDevice {
     if (count === "INVALID" && items.length === 0) return null;
     if (integer(count, 0, limit) !== items.length) throw new ConnectionError("無効なマクロを受信しました。");
     return items.map(item => {
-      const code = integer(item, 0, 3 * 65536 + 5000);
-      const op = code >>> 16;
-      const value = code & 0xffff;
-      if (op === 3 ? value < 1 || value > 5000 : !isUsage(value)) {
+      const { op, value } = decodeMacroStep(integer(item, 0, 0xffffffff));
+      if (op > 3 || (op === 3 ? value < 1 || value > 5000 : !isUsage(value))) {
         throw new ConnectionError("無効なマクロ操作を受信しました。");
       }
       return { op, value };

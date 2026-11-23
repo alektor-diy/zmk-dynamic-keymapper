@@ -26,7 +26,7 @@ BUILD_ASSERT(DT_HAS_CHOSEN(zdkm_uart), "zdkm: enable the zdkm-usb snippet");
 static const struct device *const uart = DEVICE_DT_GET(DT_CHOSEN(zdkm_uart));
 
 struct command {
-    char line[160 + sizeof("WRITE ") - 1 + SESSION_TOKEN_LENGTH + 1];
+    char line[224 + sizeof("WRITE ") - 1 + SESSION_TOKEN_LENGTH + 1];
 };
 
 K_MSGQ_DEFINE(commands, sizeof(struct command), 2, 1);
@@ -255,6 +255,9 @@ static void send_save_result(int slot, struct zdkm_combo combo, const char *toke
     case -EINVAL:
         send_line("ERR INVALID");
         return;
+    case -ENOTSUP:
+        send_line("ERR KEY_USAGE");
+        return;
     case -EEXIST:
         send_line("ERR DUPLICATE");
         return;
@@ -280,6 +283,7 @@ static void send_edit_result(int err) {
     switch (err) {
     case 0: send_line("OK SAVED"); return;
     case -EINVAL: send_line("ERR INVALID"); return;
+    case -ENOTSUP: send_line("ERR KEY_USAGE"); return;
     case -EPERM: send_line("ERR PROTECTED"); return;
     case -EAGAIN: send_line("ERR KEYS_HELD"); return;
     case -EBUSY: send_line("ERR EDIT_BUSY"); return;
@@ -382,7 +386,7 @@ static bool valid_layer_name(const uint8_t *name, size_t len) {
 }
 
 static bool process_editor_command(const char *operation, char *cursor, const char *token) {
-    char response[160];
+    char response[224];
     uint16_t index;
     if (strcmp(operation, "BACKUPID") == 0) {
         if (take_word(&cursor)) goto invalid;
@@ -525,7 +529,7 @@ static bool process_editor_command(const char *operation, char *cursor, const ch
             if (!take_number(&cursor, ZDKM_MACRO_STEPS, &count)) goto invalid;
             macro.count = count;
             for (size_t i = 0; i < count; ++i) {
-                if (!take_uint(&cursor, (ZDKM_MACRO_WAIT << 16) | UINT16_MAX, &macro.steps[i])) goto invalid;
+                if (!take_uint(&cursor, UINT32_MAX, &macro.steps[i])) goto invalid;
             }
             if (take_word(&cursor)) goto invalid;
             if (!auth_state(true, token)) {
@@ -558,7 +562,7 @@ invalid:
 static void process_command(char *cursor) {
     const char *operation = take_word(&cursor);
     const char *token = NULL;
-    char response[160];
+    char response[224];
     uint16_t index;
 
     if (!operation) {
@@ -616,7 +620,7 @@ static void process_command(char *cursor) {
         uint16_t slow;
         struct zdkm_combo combo = {0};
         if (!take_number(&cursor, zdkm_slot_count() - 1, &index) ||
-            !take_number(&cursor, UINT16_MAX, &combo.output) ||
+            !take_uint(&cursor, UINT32_MAX, &combo.output) ||
             !take_number(&cursor, UINT16_MAX, &combo.timeout_ms) ||
             !take_number(&cursor, UINT16_MAX, &combo.prior_idle_ms) ||
             !take_uint(&cursor, UINT32_MAX, &combo.layers) ||
@@ -711,6 +715,12 @@ static void process_command(char *cursor) {
         snprintk(response, sizeof(response), "OK CAPS %u %u %u",
                  (unsigned int)ZDKM_MAX_KEYS, (unsigned int)zdkm_layer_count(),
                  (unsigned int)zdkm_action_count());
+        send_line(response);
+    } else if (strcmp(operation, "EXTKEYS") == 0) {
+        send_line(zdkm_supports_extended_keys() ? "OK EXTKEYS 1" : "OK EXTKEYS 0");
+    } else if (strcmp(operation, "KEYRANGES") == 0) {
+        snprintk(response, sizeof(response), "OK KEYRANGES %u %u",
+                 zdkm_keyboard_usage_limit(), zdkm_consumer_usage_limit());
         send_line(response);
     } else if (strcmp(operation, "ARM") == 0) {
         arm_auth(NULL);

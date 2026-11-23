@@ -22,5 +22,13 @@ const char *zdkm_action_at(size_t index, uint16_t *code);
 uint32_t zdkm_backup_layout_id(void);
 void zdkm_authorize(void);
 bool zdkm_keys_held(void);
+bool zdkm_supports_extended_keys(void);
+uint16_t zdkm_keyboard_usage_limit(void);
+uint16_t zdkm_consumer_usage_limit(void);
+uint32_t zdkm_key_binding(uint32_t output);
+bool zdkm_key_supported(uint32_t output);
+
+#define ZDKM_PACKED_KEY UINT32_C(0x10000000)
+#define ZDKM_KEY_PAYLOAD UINT32_C(0x3fffffff)
 
 #endif

@@ -1,5 +1,6 @@
-import { fillKeycap, fullSizeKeys, keycodes, keycodeText } from "./keycodes.js?v=keyboard-palette";
-import { ConnectionError } from "./serial.js?v=settings-backup";
+import { fillKeycap, fullSizeKeys, keycodes, keycodeText, packUsage, unpackUsage,
+  encodeMacroStep, validMacroSteps, setUsageValue, groupExtraKeys } from "./keycodes.js?v=key-groups";
+import { ConnectionError, supportsUsage } from "./serial.js?v=full-keys";
 
 const operationLabels = new Map([
   ["Next Profile", "次のプロファイルへ"],
@@ -122,6 +123,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   let position = null;
   let activeKeyParameter = null;
   let usageSelect = null;
+  let keyCaps = null;
   let savedMapDraft = "";
   let mapSyncRequired = false;
   let slot = null;
@@ -293,9 +295,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     }
   }
 
-  function setConnection(capabilities, layout, count, encoderLayout = []) {
+  function setConnection(capabilities, layout, count, encoderLayout = [], outputCaps = null) {
     if (elements["usage-picker"].open) elements["usage-picker"].close();
     usageSelect = null;
+    keyCaps = outputCaps;
     features = capabilities;
     keys = layout;
     encoders = encoderLayout.map(item => ({ ...item, position: encoderPosition(item.encoder) }));
@@ -853,7 +856,22 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     refresh();
   }
 
-  function drawKeyPalette(palette, extra, createKey, allowed = () => true) {
+  function drawExtraKeys(container, codes, createKey) {
+    container.replaceChildren(...groupExtraKeys(codes).map(({ name, codes }, index) => {
+      const section = document.createElement("section");
+      const heading = document.createElement("h3");
+      heading.id = `${container.id}-group-${index}`;
+      heading.textContent = name;
+      section.setAttribute("aria-labelledby", heading.id);
+      const keys = document.createElement("div");
+      keys.className = "extra-key-row";
+      keys.append(...codes.map(createKey));
+      section.append(heading, keys);
+      return section;
+    }));
+  }
+
+  function drawKeyPalette(palette, extra, createKey) {
     const groups = fullSizeKeys(keyboardLayout);
     const shown = new Set();
     const caps = groups.map((group, index) => {
@@ -861,7 +879,6 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       block.className = "palette-block";
       block.style.setProperty("--columns", [60, 12, 16][index]);
       for (const { code, column, row, width, height } of group) {
-        if (!allowed(code)) continue;
         shown.add(code);
         const entry = createKey(code);
         entry.dataset.row = row;
@@ -872,7 +889,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       return block;
     });
     palette.replaceChildren(...caps);
-    extra.replaceChildren(...keycodes.filter(code => !shown.has(code) && allowed(code)).map(createKey));
+    drawExtraKeys(extra, keycodes.filter(code => !shown.has(code)), createKey);
   }
 
   function renderPalette() {
@@ -942,17 +959,37 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
 
   function drawUsagePalette(select) {
     const dialog = elements["usage-picker"];
-    drawKeyPalette(elements["usage-palette"], elements["usage-extra-keys"], code => {
-      const value = String(code - 0x070000);
+    const palette = elements["usage-palette"];
+    const extras = elements["usage-extra-keys"];
+    const query = normalizeQuery(elements["usage-search"].value);
+    const modifiers = [...elements["usage-modifiers"].querySelectorAll("input:checked")]
+      .reduce((flags, field) => flags | Number(field.value), 0);
+    const createKey = code => {
+      const value = packUsage(code, modifiers);
+      const supported = supportsUsage(value, keyCaps);
       const entry = makePaletteKey(code, () => {
         dialog.close();
-        if (select.value === value) return;
-        select.value = value;
+        if (Number(select.value) === value) return;
+        setUsageValue(select, value, keyOption(unpackUsage(value)), supported);
         select.dispatchEvent(new Event("input", { bubbles: true }));
       });
-      entry.setAttribute("aria-pressed", String(select.value === value));
+      entry.setAttribute("aria-pressed", String((unpackUsage(Number(select.value)) & 0xffffff) === code));
+      entry.disabled = !supported;
       return entry;
-    }, code => usageLabels.has(code - 0x070000));
+    };
+    palette.parentElement.hidden = Boolean(query);
+    if (query) {
+      const matches = keycodes.filter(code => {
+        const { legend, code: name } = keyText(code);
+        return [legend, name, `0x${(code & 0xffff).toString(16)}`].some(text => normalizeQuery(text).includes(query));
+      });
+      drawExtraKeys(extras, matches, createKey);
+    } else {
+      drawKeyPalette(palette, extras, createKey);
+    }
+    elements["usage-no-results"].hidden = !query || extras.childElementCount > 0;
+    elements["usage-picker-limit"].hidden = !(extras.querySelector(".palette-key:disabled") ||
+      (!query && dialog.querySelector("#usage-palette .palette-key:disabled")));
   }
 
   function chooseUsage(title, select) {
@@ -960,9 +997,15 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     if (dialog.open || select.disabled) return;
     usageSelect = select;
     elements["usage-picker-heading"].textContent = title;
+    elements["usage-search"].value = "";
+    const modifiers = elements["usage-modifiers"];
+    modifiers.hidden = !keyCaps?.keyRanges;
+    modifiers.replaceChildren(...(modifiers.hidden ? [] : [makeKeyModifiers(unpackUsage(Number(select.value)) >>> 24)]));
     drawUsagePalette(select);
-    dialog.querySelector(".palette-surface").scrollLeft = 0;
     dialog.showModal();
+    elements["usage-picker-heading"].focus({ preventScroll: true });
+    dialog.scrollTop = 0;
+    dialog.querySelector(".palette-surface").scrollLeft = 0;
   }
 
   function showMapDraft() {
@@ -999,29 +1042,18 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   }
 
   function currentDraft() {
-    const held = new Set();
-    for (const { op, value } of steps) {
-      if (op === 3) {
-        if (!Number.isInteger(value) || value < 1 || value > 5000) return null;
-      } else if (!usageLabels.has(value)) {
-        return null;
-      } else if (op === 2) {
-        if (!held.delete(value)) return null;
-      } else if (held.has(value)) {
-        return null;
-      } else if (op === 1) {
-        held.add(value);
-      }
-    }
-    return held.size ? null : steps.map(step => step.op * 65536 + step.value);
+    return validMacroSteps(steps) ? steps.map(encodeMacroStep) : null;
   }
 
   function setMacroKeyOptions(select, selected) {
     setDetailedOptions(select, [...usageLabels.keys()].map(code => {
-      const { legend, code: name } = keyText(0x070000 + code);
-      return detailedOption(legend, `&kp ${name}`, code);
+      const { legend, code: name } = keyText(unpackUsage(code));
+      const option = detailedOption(legend, `&kp ${name}`, code);
+      option.disabled = !supportsUsage(code, keyCaps);
+      return option;
     }));
-    select.value = selected;
+    const value = Number(selected);
+    setUsageValue(select, value, keyOption(unpackUsage(value)), supportsUsage(value, keyCaps));
   }
 
   function drawMacro() {
@@ -1117,7 +1149,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       const summary = document.createElement("span");
       summary.textContent = stored ? stored.slice(0, 3).map(step =>
         step.op === 3 ? `${step.value} ms 待つ` :
-          `${keyText(0x070000 + step.value).legend} を${MACRO_OPERATIONS[step.op]}`
+          `${keyOption(unpackUsage(step.value))} を${MACRO_OPERATIONS[step.op]}`
       ).join(" → ") + (stored.length > 3 ? " …" : "") : "手順を読み込めません";
       const count = document.createElement("span");
       if (stored) count.textContent = `${stored.length} 手順`;
@@ -1233,6 +1265,12 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   elements["usage-picker"].addEventListener("close", () => {
     if (!elements["usage-picker"].open) usageSelect = null;
   });
+  elements["usage-modifiers"].addEventListener("change", () => {
+    if (usageSelect) drawUsagePalette(usageSelect);
+  });
+  elements["usage-search"].addEventListener("input", () => {
+    if (usageSelect) drawUsagePalette(usageSelect);
+  });
   elements["map-parameters"].addEventListener("input", event => {
     if (!event.target.matches("[data-parameter], [data-key-modifier]")) return;
     markPalette();
@@ -1320,6 +1358,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   elements["macro-form"].addEventListener("submit", event => {
     event.preventDefault();
     if (!editable() || macroSyncRequired || !steps?.length || !macroDirty) return;
+    if (steps.some(({ op, value }) => op !== 3 && !supportsUsage(value, keyCaps))) {
+      result("macro", "このファームウェアの HID 設定では、マクロに含まれるキーを使えません。", "error");
+      return;
+    }
     const draft = currentDraft();
     if (!draft) {
       result("macro", "「押す」と「離す」をキーごとに対応させ、待機時間を 1〜5000 ms にしてください。", "error");
@@ -1336,7 +1378,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       const saved = await attached.macro(target, features.macroSteps);
       if (attached !== state().device) return;
       if (!saved || saved.length !== draft.length || saved.some((step, index) =>
-        step.op * 65536 + step.value !== draft[index])) throw new Error("読み取ったマクロが保存内容と一致しません。");
+        encodeMacroStep(step) !== draft[index])) throw new Error("読み取ったマクロが保存内容と一致しません。");
       macroSyncRequired = false;
       macroRecords.set(target, saved);
       showMacro(target);
