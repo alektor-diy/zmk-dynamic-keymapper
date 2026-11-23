@@ -213,6 +213,24 @@ static uint32_t layout_checksum(void) {
     return crc;
 }
 
+uint32_t zdkm_backup_layout_id(void) {
+    uint32_t crc = layout_checksum();
+    for (size_t i = 0; i < zdkm_action_count(); ++i) {
+        uint16_t code;
+        const char *label = zdkm_action_at(i, &code);
+        const struct zmk_behavior_binding *binding = &find_action(code)->binding;
+        uint8_t fields[10];
+        sys_put_le16(code, fields);
+        sys_put_le32(binding->param1, fields + 2);
+        sys_put_le32(binding->param2, fields + 6);
+        crc = crc32_ieee_update(crc, fields, sizeof(fields));
+        crc = crc32_ieee_update(crc, (const uint8_t *)label, strlen(label) + 1);
+        crc = crc32_ieee_update(crc, (const uint8_t *)binding->behavior_dev,
+                                strlen(binding->behavior_dev) + 1);
+    }
+    return crc;
+}
+
 static bool valid_output(uint16_t output) {
     return (output >= 0x04 && output <= 0x65) ||
            (output >= 0xe0 && output <= 0xe7) || find_action(output);

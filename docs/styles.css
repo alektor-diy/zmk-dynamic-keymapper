@@ -23,11 +23,18 @@ button:disabled { cursor: default; opacity: .48; }
 :focus-visible { outline: 3px solid #695500; outline-offset: 3px; }
 
 .site-header { background: var(--surface); border-bottom: 1px solid var(--border); }
-.header-inner, .editor-nav, main { width: min(100% - 3rem, 1224px); margin-inline: auto; }
-.header-inner, .panel-header, .connection, .form-actions {
+.header-inner, main { width: min(100% - 3rem, 1224px); margin-inline: auto; }
+.panel-header, .connection, .form-actions {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
 }
-.header-inner { min-height: 70px; padding-block: .65rem; }
+.header-inner {
+  display: grid; grid-template: minmax(70px, auto) auto / minmax(0, 1fr) auto;
+  grid-template-areas: "brand connection" "nav backup";
+  align-items: center; column-gap: 1rem;
+}
+.header-inner .brand { grid-area: brand; }
+.header-inner .connection { grid-area: connection; justify-self: end; }
+.header-inner .editor-nav { grid-area: nav; align-self: end; }
 .brand { display: flex; align-items: center; gap: .8rem; }
 .brand strong { display: block; font-size: 1rem; }
 .brand-icon {
@@ -161,6 +168,8 @@ select {
 .saved-row span { color: var(--muted); font-size: .8rem; }
 .list-footer { border-top: 1px solid var(--border); padding: .65rem .75rem; }
 .row-actions { display: flex; gap: .35rem; }
+.backup-actions { grid-area: backup; justify-content: end; flex-wrap: wrap; padding-block: .25rem; }
+.backup-actions button { font-size: .75rem; min-height: 0; padding: .3rem .55rem; white-space: nowrap; }
 .recovery { margin: 1rem; font-size: .9rem; line-height: 1.55; }
 .recovery button { margin-top: .55rem; }
 .notice { margin-bottom: 1rem; padding: .6rem .85rem; color: var(--muted); background: var(--subtle); border: 1px solid var(--border); border-radius: 7px; line-height: 1.5; font-size: .875rem; }
@@ -218,6 +227,9 @@ footer { margin-top: 1.4rem; font-size: .875rem; color: var(--muted); line-heigh
 .keycap-code { font: 600 .54rem/1.12 ui-monospace, monospace; color: var(--muted); }
 .extra-key-palette { margin-block: .7rem 1rem; }
 .extra-key-palette .palette-key { min-height: 36px; min-width: 42px; padding-inline: .4rem; }
+.key-picker-field { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 0; }
+.key-picker-field select { flex: 1 1 8rem; min-width: 0; }
+.key-picker-field button { white-space: nowrap; }
 .map-fields, .parameter-fields { display: flex; flex-wrap: wrap; align-items: start; gap: .7rem; }
 .map-fields > div:first-child, .parameter-fields > div { min-width: min(100%, 10rem); }
 .map-fields > div:first-child { width: min(100%, 24rem); }
@@ -283,19 +295,28 @@ footer { margin-top: 1.4rem; font-size: .875rem; color: var(--muted); line-heigh
 dialog { border: 1px solid var(--border); border-radius: 14px; padding: 1.25rem; max-width: min(90vw, 420px); color: inherit; }
 dialog p { margin-top: .6rem; color: var(--muted); }
 dialog::backdrop { background: #242622a8; }
+#usage-picker { width: min(96vw, 1100px); max-width: none; max-height: 92dvh; }
+.usage-picker-header { flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+#usage-picker .form-actions { justify-content: end; }
 
 @media (max-width: 760px) {
   .workspace { grid-template-columns: 1fr; }
+  .header-inner {
+    grid-template: auto auto auto auto / minmax(0, 1fr);
+    grid-template-areas: "brand" "connection" "backup" "nav";
+    row-gap: .35rem; padding-top: .75rem;
+  }
+  .header-inner .connection { justify-self: start; }
+  .backup-actions { justify-content: start; }
 }
 @media (max-width: 520px) {
-  .header-inner, .editor-nav, main { width: calc(100% - 1.25rem); }
-  .header-inner, .connection { gap: .45rem; }
-  .header-inner { flex-wrap: wrap; }
+  .header-inner, main { width: calc(100% - 1.25rem); }
+  .connection { gap: .45rem; }
   .brand { gap: .45rem; }
   .brand strong { font-size: .84rem; }
   .connection { flex-wrap: wrap; justify-content: flex-start; width: 100%; }
   .connection-state { font-size: .76rem; }
-  .header-inner button { font-size: .78rem; padding-inline: .55rem; }
+  .connection button { font-size: .78rem; padding-inline: .55rem; }
   .keyboard-surface { padding-inline: .8rem; }
   .input-grid { grid-template-columns: 1fr 1fr; }
   .options .input-grid > :last-child { grid-column: span 2; }
