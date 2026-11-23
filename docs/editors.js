@@ -261,8 +261,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     const canPick = position !== null && ((encoder || detail) && activeKeyParameter !== null ||
       behaviors.get(features?.keyPress)?.editable);
     for (const key of elements["map-form"].querySelectorAll(".palette-key")) {
-      const available = key.dataset.special ? !encoder && position !== null &&
-        specialBehavior(key.dataset.special) !== undefined : canPick;
+      let available = canPick;
+      if (key.hasAttribute("data-bt-binding")) available = !encoder && position !== null;
+      if (key.dataset.special) available = !encoder && position !== null &&
+        specialBehavior(key.dataset.special) !== undefined;
       key.disabled = !enabled || mapSyncRequired || !available;
     }
     const operationIncomplete = [...elements["map-parameters"].querySelectorAll("[data-operation-field]")]
@@ -306,6 +308,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     layerCount = count;
     layers = null;
     behaviors.clear();
+    renderBluetoothProfiles();
     layer = null;
     position = null;
     activeKeyParameter = null;
@@ -401,7 +404,10 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     }
     if (attached !== state().device) return;
     layers = available;
-    behaviors = catalog;
+    if (behaviors !== catalog) {
+      behaviors = catalog;
+      renderBluetoothProfiles();
+    }
     const encoder = selectedEncoder();
     if (layer !== selected || (encoder && !rotations[encoder.encoder])) {
       if (encoder) elements["map-assignment"].open = false;
@@ -759,10 +765,17 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     const code = detail && parameter ? parameterValue(parameter) :
       binding?.id === features?.keyPress ? String(binding?.parameters[0]) : undefined;
     const behavior = detail ? elements["map-behavior"].value : binding?.id;
+    const parameters = detail ? Array.from(elements["map-parameters"].querySelectorAll("[data-operation-field]"),
+      field => field.value) : binding?.parameters ?? [];
+    const btBinding = [behavior, ...parameters].join(",");
     for (const entry of elements["map-form"].querySelectorAll(".palette-key")) {
       const special = entry.dataset.special;
-      const id = special ? specialBehavior(special) : undefined;
-      const selected = special ? id !== undefined && String(id) === String(behavior) : entry.dataset.code === code;
+      let selected = entry.dataset.code === code;
+      if (entry.hasAttribute("data-bt-binding")) selected = entry.dataset.btBinding === btBinding;
+      if (special) {
+        const id = specialBehavior(special);
+        selected = id !== undefined && String(id) === String(behavior);
+      }
       entry.setAttribute("aria-pressed", String(position !== null && selected));
     }
   }
@@ -920,6 +933,22 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
       if (behavior.editable && behavior.parameters.every(kind => !kind) &&
           [token, code].includes(behavior.name.trim().toLowerCase().replace(/^&/, ""))) return id;
     }
+  }
+
+  function renderBluetoothProfiles() {
+    const group = elements["map-bt-profiles"];
+    const [id, behavior] = [...behaviors].find(([, entry]) => entry.editable && entry.name === "Bluetooth") ?? [];
+    const operation = behavior?.operations?.find(entry => entry.name === "Select Profile");
+    group.replaceChildren(...Array.from({ length: operation?.profileCount ?? 0 }, (_, profile) => {
+      const params = [operation.value, profile];
+      const entry = button("", () => assignFromPalette(id, params, entry));
+      entry.classList.add("palette-key");
+      entry.dataset.btBinding = [id, ...params].join(",");
+      entry.title = `Bluetooth の接続先 ${profile + 1} に切り替え`;
+      fillKeycap(entry, { legend: `BT${profile + 1}` });
+      return entry;
+    }));
+    group.hidden = !group.childElementCount;
   }
 
   function assignFromPalette(id, params, entry) {
@@ -1283,6 +1312,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
     const operation = field.value === "" ? undefined : operations.find(entry => entry.value === Number(field.value));
     elements["map-parameters"].querySelector('[data-parameter="1"]')?.parentElement.remove();
     elements["map-parameters"].append(...profilePicker(operation));
+    markPalette();
     showMapDraft();
   });
   elements["map-form"].addEventListener("submit", event => {

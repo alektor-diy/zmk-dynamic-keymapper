@@ -8,7 +8,7 @@
   <title>ZMK Dynamic Keymapper</title>
   <link rel="stylesheet" href="./styles.css?v=key-groups">
   <script type="module">
-    import("./app.js?v=key-groups").catch(error => {
+    import("./app.js?v=bt-profiles").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -191,6 +191,7 @@
           </details>
           <div id="map-palette-targets" class="palette-targets" role="group" aria-label="パレットの入力先" hidden></div>
           <div id="map-special-keys" class="special-key-palette" role="group" aria-label="キーの割り当てを透過・無効にする"></div>
+          <div id="map-bt-profiles" class="special-key-palette" role="group" aria-label="Bluetooth の接続先" hidden></div>
           <div class="palette-surface">
             <div id="map-palette" class="full-size-palette" role="group" aria-label="フルサイズのキー候補"></div>
           </div>
