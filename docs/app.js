@@ -1,8 +1,8 @@
-import { ConnectionError, SerialDevice, delay, supportsUsage } from "./serial.js?v=bt-actions";
-import { setupEditors } from "./editors.js?v=bt-actions";
+import { ConnectionError, SerialDevice, delay, supportsUsage } from "./serial.js?v=unlock-keys";
+import { setupEditors } from "./editors.js?v=unlock-keys";
 import { fillKeycap, keycodes, keycodeText, packUsage, setUsageValue, unpackUsage } from "./keycodes.js?v=bt-actions";
 import { DemoDevice } from "./demo.js?v=bt-actions";
-import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=bt-actions";
+import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=unlock-keys";
 import { bluetoothActionLabel } from "./bluetooth.js";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));

@@ -1,6 +1,9 @@
 import { decodeMacroStep, unpackUsage } from "./keycodes.js?v=bt-actions";
 import { bluetoothActions, isBluetoothAction } from "./bluetooth.js";
 
+export const lastUnlockMessage =
+  "最後の &zdkm_unlock キーは保護されています。変更するには、先に別のキーに &zdkm_unlock を割り当ててください。";
+
 export class ConnectionError extends Error {}
 class ProtocolError extends Error {
   constructor(code) {
@@ -23,6 +26,7 @@ const RESPONSE_ERRORS = {
   EDIT_BUSY: "設定を書き込めません。Studio の未保存変更を保存または破棄し、Studio を切断してから再試行してください。",
   KEYS_HELD: "すべてのキーを離してから、もう一度保存してください。",
   PROTECTED: "このキーには ZDKM の解除動作が割り当てられています。",
+  LAST_UNLOCK: lastUnlockMessage,
   RESTART: "保存状態を再読み込みできませんでした。キーボードを再起動して確認してください。",
 };
 

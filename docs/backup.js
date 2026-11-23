@@ -1,4 +1,4 @@
-import { delay, isUsage, supportsUsage } from "./serial.js?v=bt-actions";
+import { delay, isUsage, lastUnlockMessage, supportsUsage } from "./serial.js?v=unlock-keys";
 import { decodeMacroStep, encodeMacroStep, validMacroSteps } from "./keycodes.js?v=bt-actions";
 import { isBluetoothAction } from "./bluetooth.js";
 
@@ -151,8 +151,10 @@ export function planRestore(current, desired) {
     throw new Error("設定ファイルのレイヤー数またはマクロ数が一致しません。");
   }
   const behaviorIds = new Map(compatibility.behaviors.map(([id, name]) => [id, name]));
+  const isUnlock = id => behaviorIds.get(id)?.toLowerCase().replace(/[ _-]/g, "") === "zdkmunlock";
   const firmwareChecks = compatibility.firmware !== null;
   const changes = [];
+  const removeUnlocks = [];
   const clearMacros = [];
   for (const [slot, steps] of macros.entries()) {
     if (!validateMacro(steps, compatibility.macroLimits[1])) throw new Error(`マクロ ${slot} が無効です。`);
@@ -191,12 +193,10 @@ export function planRestore(current, desired) {
           !(behaviorIds.has(binding[0]) || (firmwareChecks && same(binding, [65535, 0, 0])))) {
         throw new Error(`${label}の割り当てを復元できません。`);
       }
-      const original = (behaviorIds.get(old.bindings[position][0]) ?? "").toLowerCase().replace(/[ _-]/g, "");
-      if (original === "zdkmunlock" && binding[0] !== old.bindings[position][0]) {
-        throw new Error(`${label}の ZDKM 解除キーは上書きできません。`);
-      }
       const args = [layer.id, position, ...binding].join(" ");
-      changes.push({ command: `BINDSET ${args}`, check: `BINDCHECK ${args}`, label });
+      const removesUnlock = isUnlock(old.bindings[position][0]) && !isUnlock(binding[0]);
+      const change = { command: `BINDSET ${args}`, check: `BINDCHECK ${args}`, label };
+      (removesUnlock ? removeUnlocks : changes).push(change);
     }
     for (const [sensor, codes] of layer.encoders.entries()) {
       if (same(codes, old.encoders[sensor])) continue;
@@ -209,6 +209,12 @@ export function planRestore(current, desired) {
       changes.push({ command: `ENCODERSET ${args}`, check: `ENCODERCHECK ${args}`, label });
     }
   }
+  if (removeUnlocks.length) {
+    if (!keymap.some(layer => layer.bindings.some(([id]) => isUnlock(id)))) {
+      throw new Error(lastUnlockMessage);
+    }
+    if (!firmwareChecks) throw new Error("ZDKM 解除キーの変更を復元するには、ファームウェアを更新してください。");
+  }
   const comboChanges = planCombos(current.settings.combos, combos, compatibility, current);
-  return [...changes, ...comboChanges, ...clearMacros];
+  return [...changes, ...removeUnlocks, ...comboChanges, ...clearMacros];
 }

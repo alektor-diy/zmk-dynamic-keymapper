@@ -1,6 +1,6 @@
 import { fillKeycap, fullSizeKeys, keycodes, keycodeText, packUsage, unpackUsage,
   encodeMacroStep, validMacroSteps, setUsageValue, groupExtraKeys } from "./keycodes.js?v=bt-actions";
-import { ConnectionError, supportsUsage } from "./serial.js?v=bt-actions";
+import { ConnectionError, supportsUsage } from "./serial.js?v=unlock-keys";
 import { bluetoothActionLabel, isBluetoothAction } from "./bluetooth.js";
 
 const operationLabels = new Map([
@@ -445,8 +445,7 @@ export function setupEditors({ elements, drawKeyboard, usageLabels, run, notice,
   function canAssign(key) {
     const encoder = encoders.find(item => item.position === key);
     if (encoder) return !!encoderBindings[encoder.encoder];
-    const binding = bindings[key];
-    return !!binding && behaviors.get(binding.id)?.name.toLowerCase().replace(/[ _-]/g, "") !== "zdkmunlock";
+    return !!bindings[key];
   }
 
   function discardMapDraft(includeLayerName = false) {

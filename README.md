@@ -36,3 +36,5 @@ v0.4での動作は未確認です。
 
 Chrome または Edge で [ZMK Dynamic Keymapper](https://alektor-diy.github.io/zmk-dynamic-keymapper/) を開き、`USB で接続` から ZDKM 専用の USB ポートを選びます。  
 解除ダイアログが表示されたら、キーボード上の `&zdkm_unlock` キーを押してロックを解除してください。
+
+別のキーに `&zdkm_unlock` が残っていれば、解除キーを変更できます。1つしかない場合は、先に別のキーにも `&zdkm_unlock` を割り当てて保存してください。
