@@ -284,7 +284,7 @@ static void send_edit_result(int err) {
     case 0: send_line("OK SAVED"); return;
     case -EINVAL: send_line("ERR INVALID"); return;
     case -ENOTSUP: send_line("ERR KEY_USAGE"); return;
-    case -EPERM: send_line("ERR PROTECTED"); return;
+    case -EPERM: send_line("ERR LAST_UNLOCK"); return;
     case -EAGAIN: send_line("ERR KEYS_HELD"); return;
     case -EBUSY: send_line("ERR EDIT_BUSY"); return;
     case -EFAULT: send_line("ERR RESTART"); return;

@@ -79,22 +79,31 @@ static struct {
 } edit;
 K_SEM_DEFINE(edit_done, 0, 1);
 
-static int check_current_binding(const struct zmk_behavior_binding *current,
-                                 const struct zmk_behavior_binding *replacement) {
-    if (!current) return -EINVAL;
-    if (current->behavior_dev &&
-        strcmp(current->behavior_dev, DEVICE_DT_NAME(DT_NODELABEL(zdkm_unlock))) == 0 &&
-        (!replacement->behavior_dev || strcmp(current->behavior_dev, replacement->behavior_dev) != 0)) {
-        return -EPERM;
+static bool is_unlock_binding(const struct zmk_behavior_binding *binding) {
+    return binding && binding->behavior_dev &&
+           strcmp(binding->behavior_dev, DEVICE_DT_NAME(DT_NODELABEL(zdkm_unlock))) == 0;
+}
+
+static bool has_other_unlock_binding(const struct zmk_behavior_binding *current) {
+    size_t positions = MIN(zdkm_position_count(), UINT8_MAX + 1);
+    for (size_t index = 0; index < zdkm_layer_count(); ++index) {
+        uint8_t layer = zmk_keymap_layer_index_to_id(index);
+        if (layer == ZMK_KEYMAP_LAYER_ID_INVAL) continue;
+        for (size_t position = 0; position < positions; ++position) {
+            const struct zmk_behavior_binding *binding =
+                zmk_keymap_get_layer_binding_at_idx(layer, position);
+            if (binding != current && is_unlock_binding(binding)) return true;
+        }
     }
-    return 0;
+    return false;
 }
 
 static int set_binding(void) {
     const struct zmk_behavior_binding *current =
         zmk_keymap_get_layer_binding_at_idx(edit.layer, edit.position);
-    int err = check_current_binding(current, &edit.binding);
-    if (err < 0) return err;
+    if (!current) return -EINVAL;
+    if (is_unlock_binding(current) && !is_unlock_binding(&edit.binding) &&
+        !has_other_unlock_binding(current)) return -EPERM;
     bool same_behavior = current->behavior_dev == edit.binding.behavior_dev ||
                          (current->behavior_dev && edit.binding.behavior_dev &&
                           strcmp(current->behavior_dev, edit.binding.behavior_dev) == 0);
@@ -168,7 +177,8 @@ int zdkm_set_binding(uint8_t layer, uint8_t position, const struct zmk_behavior_
 int zdkm_check_binding(uint8_t layer, uint8_t position, const struct zmk_behavior_binding *binding) {
     if (binding->behavior_dev ? zmk_behavior_validate_binding(binding) < 0 :
                                 binding->param1 || binding->param2) return -EINVAL;
-    return check_current_binding(zmk_keymap_get_layer_binding_at_idx(layer, position), binding);
+    /* Restore checks run before writes. Check unlock protection when each edit is applied. */
+    return zmk_keymap_get_layer_binding_at_idx(layer, position) ? 0 : -EINVAL;
 }
 
 int zdkm_check_layer_name(uint8_t layer, const char *name) {
