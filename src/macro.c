@@ -16,41 +16,50 @@
 LOG_MODULE_DECLARE(zdkm);
 
 #define MACRO_SETTINGS "zdkm_macro"
-#define MACRO_VERSION 1
-#define MACRO_RECORD_MAX (2 + 3 * ZDKM_MACRO_STEPS)
+#define MACRO_VERSION 2
+#define MACRO_RECORD_MAX (2 + 4 * ZDKM_MACRO_STEPS)
 #define KEY_INTERVAL_MS 20
 
 static struct zdkm_macro macros[ZDKM_MACRO_SLOTS];
 static uint8_t invalid_slots;
 K_MUTEX_DEFINE(macros_lock);
 
-static bool valid(const struct zdkm_macro *macro) {
+static uint8_t step_operation(uint32_t step) {
+    return step & ZDKM_PACKED_KEY ? step >> 30 : step >> 16;
+}
+
+static uint32_t step_value(uint32_t step) {
+    return step & ZDKM_PACKED_KEY ? step & ZDKM_KEY_PAYLOAD : (uint16_t)step;
+}
+
+static bool valid(const struct zdkm_macro *macro, bool check_support) {
     if (macro->count > ZDKM_MACRO_STEPS) return false;
-    uint8_t pressed[32] = {0};
+    uint32_t pressed[ZDKM_MACRO_STEPS];
     size_t held = 0;
     for (size_t i = 0; i < macro->count; ++i) {
-        uint32_t op = macro->steps[i] >> 16;
-        uint16_t value = macro->steps[i];
+        uint32_t step = macro->steps[i];
+        if (!(step & ZDKM_PACKED_KEY) && step >> 16 > ZDKM_MACRO_WAIT) return false;
+        uint8_t op = step_operation(step);
+        uint32_t value = step_value(step);
         if (op == ZDKM_MACRO_WAIT) {
             if (value < 1 || value > ZDKM_MACRO_MAX_WAIT) return false;
             continue;
         }
-        if (!((value >= 4 && value <= 0x65) || (value >= 0xe0 && value <= 0xe7))) return false;
-        uint8_t *byte = &pressed[value / 8];
-        uint8_t bit = BIT(value % 8);
+        uint32_t binding = zdkm_key_binding(value);
+        if (!binding || (check_support && !zdkm_key_supported(value))) return false;
+        size_t index = 0;
+        while (index < held && (pressed[index] & 0xffffff) != (binding & 0xffffff)) ++index;
         switch (op) {
         case ZDKM_MACRO_TAP:
-            if (*byte & bit) return false;
+            if (index < held) return false;
             break;
         case ZDKM_MACRO_PRESS:
-            if (*byte & bit) return false;
-            *byte |= bit;
-            ++held;
+            if (index < held) return false;
+            pressed[held++] = binding;
             break;
         case ZDKM_MACRO_RELEASE:
-            if (!(*byte & bit)) return false;
-            *byte &= ~bit;
-            --held;
+            if (index == held || pressed[index] != binding) return false;
+            pressed[index] = pressed[--held];
             break;
         default:
             return false;
@@ -69,15 +78,21 @@ int zdkm_macro_get(uint8_t slot, struct zdkm_macro *macro) {
 }
 
 int zdkm_macro_save(uint8_t slot, const struct zdkm_macro *macro) {
-    if (slot >= ARRAY_SIZE(macros) || !valid(macro)) return -EINVAL;
+    if (slot >= ARRAY_SIZE(macros) || !valid(macro, false)) return -EINVAL;
+    if (!valid(macro, true)) return -ENOTSUP;
     if (zdkm_get_status() == ZDKM_LOADING) return -EBUSY;
     char key[] = MACRO_SETTINGS "/0";
     key[sizeof(key) - 2] += slot;
-    uint8_t record[MACRO_RECORD_MAX] = {MACRO_VERSION, macro->count};
+    uint8_t record[MACRO_RECORD_MAX] = {1, macro->count};
     for (size_t i = 0; i < macro->count; ++i) {
-        sys_put_le24(macro->steps[i], &record[2 + 3 * i]);
+        if (macro->steps[i] & ZDKM_PACKED_KEY) record[0] = MACRO_VERSION;
     }
-    int err = macro->count ? settings_save_one(key, record, 2 + 3 * macro->count) : settings_delete(key);
+    size_t width = record[0] == 1 ? 3 : 4;
+    for (size_t i = 0; i < macro->count; ++i) {
+        if (width == 3) sys_put_le24(macro->steps[i], &record[2 + width * i]);
+        else sys_put_le32(macro->steps[i], &record[2 + width * i]);
+    }
+    int err = macro->count ? settings_save_one(key, record, 2 + width * macro->count) : settings_delete(key);
     if (err < 0) return err;
     k_mutex_lock(&macros_lock, K_FOREVER);
     macros[slot] = *macro;
@@ -93,14 +108,18 @@ static int load_macro(const char *name, size_t len, settings_read_cb read_cb, vo
     struct zdkm_macro macro = {0};
     if (len == 0) return 0;
     if (len >= 2 && len <= sizeof(record) && read_cb(arg, record, len) == len &&
-        record[0] == MACRO_VERSION && len == 2 + 3 * record[1]) {
+        (record[0] == 1 || record[0] == MACRO_VERSION)) {
+        size_t width = record[0] == 1 ? 3 : 4;
         macro.count = record[1];
-        for (size_t i = 0; i < macro.count; ++i) {
-            macro.steps[i] = sys_get_le24(&record[2 + 3 * i]);
-        }
-        if (valid(&macro)) {
-            macros[slot] = macro;
-            return 0;
+        if (macro.count <= ZDKM_MACRO_STEPS && len == 2 + width * macro.count) {
+            for (size_t i = 0; i < macro.count; ++i) {
+                const uint8_t *bytes = &record[2 + width * i];
+                macro.steps[i] = width == 3 ? sys_get_le24(bytes) : sys_get_le32(bytes);
+            }
+            if (valid(&macro, false)) {
+                macros[slot] = macro;
+                return 0;
+            }
         }
     }
     invalid_slots |= BIT(slot);
@@ -125,15 +144,15 @@ static void play_step(struct k_work *work) {
         return;
     }
     uint32_t step = playing.steps[next_step];
-    uint32_t op = step >> 16;
-    uint16_t value = step;
+    uint8_t op = step_operation(step);
+    uint32_t value = step_value(step);
     uint16_t delay = KEY_INTERVAL_MS;
     if (op == ZDKM_MACRO_WAIT) {
         delay = value;
     } else {
         struct zmk_behavior_binding binding = {
             .behavior_dev = DEVICE_DT_NAME(DT_NODELABEL(kp)),
-            .param1 = ZMK_HID_USAGE(HID_USAGE_KEY, value),
+            .param1 = zdkm_key_binding(value),
         };
         trigger.timestamp = k_uptime_get();
         int err = zmk_behavior_invoke_binding(&binding, trigger, op != ZDKM_MACRO_RELEASE && !release_tap);
@@ -146,7 +165,8 @@ static void play_step(struct k_work *work) {
 
 static int macro_pressed(struct zmk_behavior_binding *binding, struct zmk_behavior_binding_event event) {
     if (binding->param1 >= ZDKM_MACRO_SLOTS || !atomic_cas(&running, 0, 1)) return ZMK_BEHAVIOR_OPAQUE;
-    if (zdkm_macro_get(binding->param1, &playing) < 0 || !playing.count) {
+    if (zdkm_macro_get(binding->param1, &playing) < 0 || !playing.count ||
+        !valid(&playing, true)) {
         atomic_clear(&running);
         return ZMK_BEHAVIOR_OPAQUE;
     }

@@ -10,8 +10,8 @@
 
 struct zdkm_combo {
     uint32_t layers;
+    uint32_t output;
     uint16_t positions[ZDKM_MAX_KEYS];
-    uint16_t output;
     uint16_t timeout_ms;
     uint16_t prior_idle_ms;
     uint8_t count;

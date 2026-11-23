@@ -1,3 +1,5 @@
+import { keyboardExtras, consumerExtras } from "./extra-keycodes.js";
+
 const KEYBOARD_PAGE = 0x070000;
 const CONSUMER_PAGE = 0x0c0000;
 const dictionary = new Map();
@@ -39,6 +41,77 @@ for (const [usage, name, legend] of [
   [0xb5, "C_NEXT", "次の曲"], [0xb6, "C_PREV", "前の曲"], [0xcd, "C_PP", "再生 / 停止"],
   [0xe2, "C_MUTE", "消音"], [0xe9, "C_VOL_UP", "音量 +"], [0xea, "C_VOL_DN", "音量 −"],
 ]) add(CONSUMER_PAGE, usage, name, legend);
+
+const extraLegends = new Map([
+  ["INTERNATIONAL_6", "テンキー ,"], ["LANGUAGE_1", "韓英切替"], ["LANGUAGE_2", "漢字"],
+  ["LANGUAGE_3", "カタカナ"], ["LANGUAGE_4", "ひらがな"], ["LANGUAGE_5", "半角／全角"],
+  ["KP_EQUAL", "テンキー ="], ["KP_COMMA", "テンキー ,"],
+  ["C_BRIGHTNESS_INC", "明るさ +"], ["C_BRIGHTNESS_DEC", "明るさ −"],
+]);
+for (const [page, entries] of [[KEYBOARD_PAGE, keyboardExtras], [CONSUMER_PAGE, consumerExtras]]) {
+  for (const [usage, name] of entries) {
+    const code = name.replace(/^INTERNATIONAL_/, "INT").replace(/^LANGUAGE_/, "LANG");
+    if (!dictionary.has(page + usage)) add(page, usage, code, extraLegends.get(name));
+  }
+}
+
+export function packUsage(code, modifiers = 0) {
+  const usage = code & 0xffff;
+  if ((code & 0xff0000) === CONSUMER_PAGE) return 0x11000000 + usage;
+  return modifiers ? 0x10000000 + modifiers * 65536 + usage : usage;
+}
+
+export function unpackUsage(value) {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) return 0;
+  if (value >= 4 && value <= 0xff) return KEYBOARD_PAGE + value;
+  if ((value & 0xfe000000) !== 0x10000000) return 0;
+  const usage = value & 0xffff;
+  const modifiers = (value >>> 16) & 0xff;
+  return value & 0x01000000
+    ? usage && usage <= 0xfff && !modifiers ? CONSUMER_PAGE + usage : 0
+    : usage >= 4 && usage <= 0xff ? modifiers * 0x1000000 + KEYBOARD_PAGE + usage : 0;
+}
+
+export function encodeMacroStep({ op, value }) {
+  return (value & 0x10000000) && op !== 3 ? op * 0x40000000 + value : op * 65536 + value;
+}
+
+export function decodeMacroStep(code) {
+  return code & 0x10000000
+    ? { op: code >>> 30, value: code & 0x3fffffff }
+    : { op: code >>> 16, value: code & 0xffff };
+}
+
+export function validMacroSteps(steps) {
+  const held = new Map();
+  for (const { op, value } of steps) {
+    if (op === 3) {
+      if (!Number.isInteger(value) || value < 1 || value > 5000) return false;
+      continue;
+    }
+    const key = unpackUsage(value);
+    const base = key & 0xffffff;
+    if (!key || !Number.isInteger(op) || op < 0 || op > 2) return false;
+    if (op === 2) {
+      if (held.get(base) !== key) return false;
+      held.delete(base);
+    } else if (held.has(base)) {
+      return false;
+    } else if (op === 1) {
+      held.set(base, key);
+    }
+  }
+  return held.size === 0;
+}
+
+export function setUsageValue(select, value, label, supported) {
+  if (value && ![...select.options].some(option => Number(option.value) === Number(value))) {
+    const option = new Option(label, value);
+    option.disabled = !supported;
+    select.add(option);
+  }
+  select.value = value ?? "";
+}
 
 const usLegends = new Map([
   ...[..."!@#$%^&*()"].map((text, index) => [0x1e + index, [undefined, text]]),

@@ -24,7 +24,7 @@ class Device:
             raise ProtocolError("port did not answer with ZDKM protocol version 1")
 
     def read_line(self):
-        reply = self.port.read_until(size=161)
+        reply = self.port.read_until(size=225)
         if not reply:
             raise ProtocolError("no response from the port")
         if not reply.endswith(b"\n"):
@@ -59,7 +59,20 @@ class Device:
         for index in range(count):
             code, *label = self.request(f"ACTION {index}", "ACTION", None)
             actions[int(code)] = " ".join(label)
-        return {"keys": keys, "layers": layers, "actions": actions}
+        self.port.write(b"EXTKEYS\n")
+        reply = self.read_line()
+        if reply not in (["ERR", "UNKNOWN"], ["OK", "EXTKEYS", "0"], ["OK", "EXTKEYS", "1"]):
+            raise ProtocolError(f"EXTKEYS returned {' '.join(reply)}")
+        extended_keys = reply[-1] == "1"
+        self.port.write(b"KEYRANGES\n")
+        reply = self.read_line()
+        key_ranges = None
+        if reply != ["ERR", "UNKNOWN"]:
+            if reply[:2] != ["OK", "KEYRANGES"] or len(reply) != 4:
+                raise ProtocolError(f"KEYRANGES returned {' '.join(reply)}")
+            key_ranges = list(map(int, reply[2:]))
+        return {"keys": keys, "layers": layers, "actions": actions,
+                "extended_keys": extended_keys, "key_ranges": key_ranges}
 
     def combos(self, slots, advanced):
         combos = []
@@ -132,6 +145,24 @@ def parse_usage(value):
         raise argparse.ArgumentTypeError("use a key name, letter, or numeric HID usage") from error
 
 
+def supports_output(output, caps):
+    if output in caps["actions"] or 0xE0 <= output <= 0xE7:
+        return True
+    if caps["key_ranges"] is None:
+        return 4 <= output <= 0x65 or (
+            caps["extended_keys"] and (0x68 <= output <= 0x73 or 0x87 <= output <= 0x8B)
+        )
+    keyboard, consumer = caps["key_ranges"]
+    if 4 <= output <= keyboard:
+        return True
+    if output < 0 or output > 0xFFFFFFFF or output & 0xFE000000 != 0x10000000:
+        return False
+    usage = output & 0xFFFF
+    if output & 0x01000000:
+        return not (output & 0xFF0000) and 0 < usage <= consumer
+    return 4 <= usage <= keyboard or 0xE0 <= usage <= 0xE7
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="ZDKM port, such as COM7 or /dev/ttyACM1")
@@ -179,11 +210,12 @@ def main():
                 if not caps:
                     raise ProtocolError("extended combos require updated firmware")
                 timeout = args.timeout if args.timeout is not None else result["timeout_ms"]
+                output = args.output
                 if (not 2 <= len(args.positions) <= caps["keys"] or len(set(args.positions)) != len(args.positions)
                         or any(not 0 <= pos < result["positions"] for pos in args.positions)
                         or any(not 0 <= layer < caps["layers"] for layer in args.layer)
                         or not 1 <= timeout <= 65535 or not 0 <= args.prior_idle <= 65535
-                        or not (4 <= args.output <= 0x65 or 0xe0 <= args.output <= 0xe7 or args.output in caps["actions"])):
+                        or not supports_output(output, caps)):
                     raise ProtocolError("invalid position, layer, timeout, prior idle or output")
                 layers = sum(1 << layer for layer in set(args.layer))
                 positions = " ".join(map(str, args.positions))

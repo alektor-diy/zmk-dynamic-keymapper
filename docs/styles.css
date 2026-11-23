@@ -297,6 +297,9 @@ dialog p { margin-top: .6rem; color: var(--muted); }
 dialog::backdrop { background: #242622a8; }
 #usage-picker { width: min(96vw, 1100px); max-width: none; max-height: 92dvh; }
 .usage-picker-header { flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+#usage-picker-limit { margin: 0 0 .65rem; }
+#usage-modifiers { margin-bottom: .75rem; }
+#usage-search { width: min(100%, 18rem); margin-bottom: .55rem; }
 #usage-picker .form-actions { justify-content: end; }
 
 @media (max-width: 760px) {

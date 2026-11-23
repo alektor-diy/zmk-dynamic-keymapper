@@ -1,8 +1,8 @@
-import { ConnectionError, SerialDevice, delay } from "./serial.js?v=settings-backup";
-import { setupEditors } from "./editors.js?v=usage-layout";
-import { fillKeycap } from "./keycodes.js?v=keyboard-palette";
-import { DemoDevice } from "./demo.js?v=settings-backup";
-import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=settings-backup";
+import { ConnectionError, SerialDevice, delay, supportsUsage } from "./serial.js?v=full-keys";
+import { setupEditors } from "./editors.js?v=full-keys";
+import { fillKeycap, keycodes, keycodeText, packUsage, setUsageValue, unpackUsage } from "./keycodes.js?v=full-keys";
+import { DemoDevice } from "./demo.js?v=full-keys";
+import { captureBackup, planRestore, readBackupFile, settledInfo } from "./backup.js?v=full-keys";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map(node => [node.id, node]));
 const supportsSerial = window.isSecureContext && typeof navigator.serial?.requestPort === "function";
@@ -25,11 +25,23 @@ for (const [i, label] of [
 for (const [i, label] of [
   "左 Ctrl", "左 Shift", "左 Alt", "左 GUI", "右 Ctrl", "右 Shift", "右 Alt", "右 GUI",
 ].entries()) usageLabels.set(0xe0 + i, label);
+for (let i = 13; i <= 24; ++i) usageLabels.set(0x68 + i - 13, `F${i}`);
+for (const [i, label] of ["ろ", "かな", "¥", "変換", "無変換"].entries()) usageLabels.set(0x87 + i, label);
+for (const code of keycodes) {
+  const value = packUsage(code);
+  if (!usageLabels.has(value)) usageLabels.set(value, keycodeText(code, "us").legend);
+}
 
-const usageLabel = output => caps?.actions.get(output) ?? usageLabels.get(output) ?? `HID 0x${output.toString(16)}`;
+const usageLabel = output => caps?.actions.get(output) ?? usageLabels.get(output) ??
+  keycodeText(unpackUsage(output) || output, "us").code;
+const outputSupported = output => caps?.actions.has(output) || supportsUsage(output, caps);
 function setOutputOptions() {
   elements.usage.replaceChildren(new Option("出力する動作を選択", ""));
-  for (const [usage, label] of usageLabels) elements.usage.add(new Option(label, usage));
+  for (const [usage, label] of usageLabels) {
+    const option = new Option(label, usage);
+    option.disabled = !supportsUsage(usage, caps);
+    elements.usage.add(option);
+  }
   for (const [output, name] of caps?.actions ?? []) elements.usage.add(new Option(name, output));
 }
 
@@ -112,7 +124,8 @@ function draft() {
   const dirty = creatingCombo || !!original &&
     (!valid || !unchangedChord || output !== original.output || timeout !== original.timeout ||
       idle !== original.idle || slow !== original.slow);
-  return { canonical, output, timeout, idle, layers, slow, duplicate, valid, dirty };
+  return { canonical, output, timeout, idle, layers, slow, duplicate, valid, dirty,
+    outputSupported: outputSupported(output) };
 }
 
 function canEdit() {
@@ -151,7 +164,7 @@ function refreshEditor() {
   elements["combo-new"].disabled = !editable || creatingCombo || combos.length >= info.slots;
   elements.usage.disabled = !editable;
   elements["combo-pick-usage"].disabled = !editable;
-  elements.save.disabled = !editable || !data.dirty || !data.valid;
+  elements.save.disabled = !editable || !data.dirty || !data.valid || !data.outputSupported;
   elements.positions.disabled = !editable;
   elements["combo-scope"].hidden = !extended;
   elements.layers.disabled = !editable || !extended;
@@ -172,7 +185,7 @@ function showCombo(combo, create = false) {
   editingSlot = combo?.slot ?? null;
   creatingCombo = create;
   elements.positions.value = combo?.positions.join(", ") ?? "";
-  elements.usage.value = combo?.output ?? "";
+  setUsageValue(elements.usage, combo?.output, combo ? usageLabel(combo.output) : "", combo && outputSupported(combo.output));
   elements["combo-timeout"].value = combo?.timeout ?? info?.timeout ?? 50;
   elements["combo-idle"].value = combo?.idle ?? 0;
   elements.layers.value = layerIds(combo?.layers).join(", ");
@@ -386,7 +399,7 @@ async function loadDevice(attached, version) {
   backupContext = editorCaps && !capabilities.legacy && current.count <= 256
     ? { caps, keys, features: editorCaps, encoders } : null;
   combos = saved;
-  editors.setConnection(editorCaps, keys, capabilities.layerCount, encoders);
+  editors.setConnection(editorCaps, keys, capabilities.layerCount, encoders, capabilities);
   setOutputOptions();
   showCombo(combos[0]);
   drawKeyboard(elements.keyboard, keys, false, selectPosition, position => position);
@@ -783,7 +796,7 @@ elements["editor-form"].addEventListener("submit", event => {
   event.preventDefault();
   if (!canEdit()) return;
   const data = draft();
-  if (!data.valid || !data.dirty) return;
+  if (!data.valid || !data.dirty || !data.outputSupported) return;
   if (data.duplicate) {
     comboResult("同じ位置の組み合わせが対象レイヤーにあります。一覧から編集してください。", "error");
     return;

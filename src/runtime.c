@@ -11,6 +11,7 @@
 #include <zephyr/sys/crc.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
+#include <zmk/hid.h>
 #include <zmk/keymap.h>
 #include <zmk/matrix.h>
 #include <zmk/physical_layouts.h>
@@ -132,7 +133,7 @@ static const struct stock_combo stock[] = {
 BUILD_ASSERT(STOCK_COUNT <= ZDKM_MAX_COMBOS, "zdkm: at most 64 static combos can be imported");
 
 /* Duplicate ids would make an existing saved action resolve to a different binding. */
-static const struct combo_action *find_action(uint16_t code) {
+static const struct combo_action *find_action(uint32_t code) {
     if (code >= MACRO_ACTION_BASE) {
         size_t index = code - MACRO_ACTION_BASE;
         return index < ARRAY_SIZE(macro_actions) ? &macro_actions[index] : NULL;
@@ -231,9 +232,36 @@ uint32_t zdkm_backup_layout_id(void) {
     return crc;
 }
 
-static bool valid_output(uint16_t output) {
-    return (output >= 0x04 && output <= 0x65) ||
-           (output >= 0xe0 && output <= 0xe7) || find_action(output);
+uint16_t zdkm_keyboard_usage_limit(void) { return ZMK_HID_KEYBOARD_MAX_USAGE; }
+uint16_t zdkm_consumer_usage_limit(void) { return ZMK_HID_CONSUMER_MAX_USAGE; }
+
+uint32_t zdkm_key_binding(uint32_t output) {
+    if (output >= 4 && output < ACTION_BASE) return ZMK_HID_USAGE(HID_USAGE_KEY, output);
+    if ((output & UINT32_C(0xfe000000)) != ZDKM_PACKED_KEY) return 0;
+    uint16_t usage = output;
+    uint8_t modifiers = output >> 16;
+    bool consumer = output & UINT32_C(0x01000000);
+    if (consumer) {
+        return usage && usage <= 0xfff && !modifiers ? ZMK_HID_USAGE(HID_USAGE_CONSUMER, usage) : 0;
+    }
+    return usage >= 4 && usage < ACTION_BASE ?
+           ((uint32_t)modifiers << 24) | ZMK_HID_USAGE(HID_USAGE_KEY, usage) : 0;
+}
+
+bool zdkm_key_supported(uint32_t output) {
+    uint32_t binding = zdkm_key_binding(output);
+    if (!binding) return false;
+    uint16_t usage = binding;
+    if ((uint8_t)(binding >> 16) == HID_USAGE_CONSUMER) return usage <= zdkm_consumer_usage_limit();
+    return usage <= zdkm_keyboard_usage_limit() || (usage >= 0xe0 && usage <= 0xe7);
+}
+
+static bool valid_output(uint32_t output) {
+    return zdkm_key_binding(output) || find_action(output);
+}
+
+bool zdkm_supports_extended_keys(void) {
+    return ZMK_HID_KEYBOARD_MAX_USAGE >= HID_USAGE_KEY_KEYBOARD_INTERNATIONAL5;
 }
 
 static bool valid_combo(const struct zdkm_combo *combo) {
@@ -351,8 +379,8 @@ static void merge_legacy_stock(struct zdkm_combo *table) {
     }
 }
 
-static uint16_t decode_output(uint32_t output) {
-    if (output < STOCK_ACTION_BASE ||
+static uint32_t decode_output(uint32_t output) {
+    if (zdkm_key_binding(output) || output < STOCK_ACTION_BASE ||
         (output >= MACRO_ACTION_BASE && output < MACRO_ACTION_BASE + ZDKM_MACRO_SLOTS)) {
         return output;
     }
@@ -437,6 +465,10 @@ static void apply_table(struct k_work *work) {
     k_mutex_lock(&table_lock, K_FOREVER);
     if (atomic_get(&apply_pending)) {
         memcpy(active_table, saved_table, sizeof(active_table));
+        for (size_t slot = 0; slot < SLOT_COUNT; ++slot) {
+            uint32_t output = active_table[slot].output;
+            if (zdkm_key_binding(output) && !zdkm_key_supported(output)) active_table[slot].count = 0;
+        }
         atomic_clear(&apply_pending);
     }
     k_mutex_unlock(&table_lock);
@@ -501,6 +533,9 @@ struct zdkm_combo zdkm_get_combo(size_t slot) {
 
 int zdkm_save(int slot, struct zdkm_combo combo) {
     if (slot < -1 || slot >= SLOT_COUNT || (combo.count && !valid_combo(&combo))) return -EINVAL;
+    if (combo.count && zdkm_key_binding(combo.output) && !zdkm_key_supported(combo.output)) {
+        return -ENOTSUP;
+    }
 
     k_mutex_lock(&table_lock, K_FOREVER);
     enum zdkm_status status = settings_status();
@@ -542,12 +577,12 @@ int zdkm_save(int slot, struct zdkm_combo combo) {
 }
 
 static void invoke_output(uint8_t slot, int64_t timestamp, bool pressed) {
-    const uint16_t output = active_table[slot].output;
+    const uint32_t output = active_table[slot].output;
     struct zmk_behavior_binding binding = {
         .behavior_dev = DEVICE_DT_NAME(DT_NODELABEL(kp)),
-        .param1 = ZMK_HID_USAGE(HID_USAGE_KEY, output),
+        .param1 = zdkm_key_binding(output),
     };
-    if (output >= ACTION_BASE) {
+    if (!binding.param1) {
         const struct combo_action *action = find_action(output);
         if (!action) return;
         binding = action->binding;

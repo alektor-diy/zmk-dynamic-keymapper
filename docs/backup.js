@@ -1,4 +1,5 @@
-import { delay, isUsage } from "./serial.js?v=settings-backup";
+import { delay, isUsage, supportsUsage } from "./serial.js?v=full-keys";
+import { decodeMacroStep, encodeMacroStep, validMacroSteps } from "./keycodes.js?v=full-keys";
 
 const format = "zmk-dynamic-keymapper";
 const version = 1;
@@ -47,7 +48,7 @@ export async function captureBackup(device, context, progress) {
   for (let slot = 0; slot < features.macroSlots; ++slot) {
     const macro = await device.macro(slot, features.macroSteps);
     if (macro === null) throw new Error(`マクロ ${slot} を読み込めませんでした。`);
-    macros.push(macro.map(({ op, value }) => op * 65536 + value));
+    macros.push(macro.map(encodeMacroStep));
   }
   const keymap = [];
   for (const [index, layer] of layers.entries()) {
@@ -79,33 +80,19 @@ export async function captureBackup(device, context, progress) {
       (behavior.operations ?? []).map(({ value, profileCount, name }) => [value, profileCount, name]),
     ]),
   };
-  return { format, version, compatibility, settings: { keymap, combos, macros } };
+  return { format, version, compatibility, extendedKeys: Boolean(caps.extendedKeys),
+    keyRanges: caps.keyRanges ?? null, settings: { keymap, combos, macros } };
 }
 
 function validateMacro(steps, limit) {
-  if (!Array.isArray(steps) || steps.length > limit) return false;
-  const held = new Set();
-  for (const step of steps) {
-    if (!integer(step, 0, 3 * 65536 + 5000)) return false;
-    const op = step >>> 16;
-    const value = step & 0xffff;
-    if (op === 3) {
-      if (!integer(value, 1, 5000)) return false;
-    } else if (!isUsage(value) || (op === 2 ? !held.has(value) : held.has(value))) {
-      return false;
-    } else if (op === 1) {
-      held.add(value);
-    } else if (op === 2) {
-      held.delete(value);
-    }
-  }
-  return held.size === 0;
+  return Array.isArray(steps) && steps.length <= limit && steps.every(step => integer(step, 0, uint32)) &&
+    validMacroSteps(steps.map(decodeMacroStep));
 }
 
 const sameChord = (first, second) =>
   Boolean(first && second && first.layers === second.layers && same(first.positions, second.positions));
 
-function planCombos(before, after, compatibility) {
+function planCombos(before, after, compatibility, keyCaps) {
   const [slots, maxKeys, layerCount] = compatibility.comboLimits;
   if (!Array.isArray(after) || after.length > slots) throw new Error("コンボの件数が無効です。");
   const outputs = new Set(compatibility.actions.map(([id]) => id));
@@ -133,6 +120,9 @@ function planCombos(before, after, compatibility) {
   for (const [slot, combo] of desired) {
     const old = current.get(slot);
     if (same(old, combo)) continue;
+    if (!outputs.has(combo.output) && !supportsUsage(combo.output, keyCaps)) {
+      throw new Error(`コンボ ${slot} の出力キーは、このファームウェアの HID 設定では使えません。`);
+    }
     if (!sameChord(old, combo) && [...desired].some(([otherSlot, other]) =>
       otherSlot !== slot && same(combo.positions, other.positions) &&
       (!combo.layers || !other.layers || (combo.layers & other.layers)))) {
@@ -163,6 +153,9 @@ export function planRestore(current, desired) {
   for (const [slot, steps] of macros.entries()) {
     if (!validateMacro(steps, compatibility.macroLimits[1])) throw new Error(`マクロ ${slot} が無効です。`);
     if (same(steps, current.settings.macros[slot])) continue;
+    if (steps.map(decodeMacroStep).some(({ op, value }) => op !== 3 && !supportsUsage(value, current))) {
+      throw new Error(`マクロ ${slot} に、このファームウェアの HID 設定では使えないキーがあります。`);
+    }
     (steps.length ? changes : clearMacros).push({
       command: ["MACROSET", slot, steps.length, ...steps].join(" "), label: `マクロ ${slot}`,
     });
@@ -211,6 +204,6 @@ export function planRestore(current, desired) {
       changes.push({ command: `ENCODERSET ${args}`, check: `ENCODERCHECK ${args}`, label });
     }
   }
-  const comboChanges = planCombos(current.settings.combos, combos, compatibility);
+  const comboChanges = planCombos(current.settings.combos, combos, compatibility, current);
   return [...changes, ...comboChanges, ...clearMacros];
 }

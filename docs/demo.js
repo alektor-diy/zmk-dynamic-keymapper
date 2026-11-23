@@ -1,3 +1,5 @@
+import { decodeMacroStep } from "./keycodes.js?v=full-keys";
+
 const KEY_PRESS = 1;
 const MACRO = 2;
 const keyboardUsage = usage => 0x070000 + usage;
@@ -63,7 +65,7 @@ export class DemoDevice {
 
   async capabilities() {
     return {
-      legacy: false, maxKeys: 20, layerCount: this.names.length,
+      legacy: false, maxKeys: 20, layerCount: this.names.length, extendedKeys: true, keyRanges: [0xff, 0xfff],
       actions: new Map([[576, "ZDKM マクロ 0"], [577, "ZDKM マクロ 1"]]),
     };
   }
@@ -123,7 +125,7 @@ export class DemoDevice {
       return;
     case "MACROSET": {
       const [slot, , ...steps] = values;
-      this.macros.set(slot, steps.map(step => ({ op: step >>> 16, value: step & 0xffff })));
+      this.macros.set(slot, steps.map(decodeMacroStep));
       return;
     }
     default:

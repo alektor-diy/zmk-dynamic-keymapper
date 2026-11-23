@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light">
   <meta name="description" content="ZMK のキーマップ、コンボ、マクロを USB 接続で編集します。">
   <title>ZMK Dynamic Keymapper</title>
-  <link rel="stylesheet" href="./styles.css?v=usage-layout">
+  <link rel="stylesheet" href="./styles.css?v=full-keys">
   <script type="module">
-    import("./app.js?v=usage-layout").catch(error => {
+    import("./app.js?v=full-keys").catch(error => {
       console.error("ZDKM failed to start", error);
       document.getElementById("connection-state").textContent = "GUI の起動に失敗";
       const notice = document.getElementById("notice");
@@ -245,10 +245,14 @@
         <button id="usage-jis" class="secondary compact" type="button" aria-pressed="false">JIS</button>
       </div>
     </div>
+    <p id="usage-picker-limit" class="field-hint" hidden>グレーのキーは、接続中のファームウェアや HID 設定では使用できません。</p>
+    <div id="usage-modifiers" hidden></div>
+    <input id="usage-search" type="search" placeholder="キー名で検索" aria-label="キー名で検索">
     <div class="palette-surface">
       <div id="usage-palette" class="full-size-palette" role="group" aria-label="フルサイズのキー候補"></div>
     </div>
     <div id="usage-extra-keys" class="extra-key-palette" role="group" aria-label="その他のキー候補"></div>
+    <p id="usage-no-results" role="status" hidden>一致するキーがありません。</p>
     <form class="form-actions" method="dialog">
       <button class="secondary" autofocus>キャンセル</button>
     </form>
